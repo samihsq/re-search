@@ -52,9 +52,23 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# Start script
-COPY start.sh /start.sh
-RUN chmod +x /start.sh
+# Create start script directly in the Dockerfile
+RUN echo '#!/bin/bash\n\
+# Start script for Railway deployment\n\
+set -e\n\
+\n\
+echo "🚀 Starting Stanford Research Opportunities App..."\n\
+\n\
+# Start nginx in background (for frontend)\n\
+nginx &\n\
+\n\
+# Wait a moment for nginx to start\n\
+sleep 2\n\
+\n\
+# Start the FastAPI backend\n\
+echo "🔧 Starting FastAPI backend..."\n\
+exec uvicorn main:app --host 0.0.0.0 --port 8000' > /start.sh \
+    && chmod +x /start.sh
 
 USER app
 
