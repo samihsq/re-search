@@ -13,3 +13,5 @@ backend/.env
 /backend/__pycache__
 backend/.env
 /backend/app/api/__pycache__
+/backend/venv
+/frontend/node_modules
