@@ -3,7 +3,8 @@ FROM node:18-alpine as frontend-build
 
 WORKDIR /frontend
 COPY frontend/package*.json ./
-RUN npm ci --omit=dev
+# Install all dependencies including dev dependencies (react-scripts is in devDependencies)
+RUN npm ci
 COPY frontend/ ./
 RUN npm run build
 
@@ -19,15 +20,14 @@ RUN apt-get update && apt-get install -y \
     curl \
     wget \
     gnupg \
-    unzip \
     nginx \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Chrome for Selenium
-RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
+# Try to install Chrome (continue if it fails)
+RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - || true \
     && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list \
     && apt-get update \
-    && apt-get install -y google-chrome-stable \
+    && apt-get install -y google-chrome-stable || echo "Chrome installation failed, continuing without it" \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements and install Python dependencies
@@ -58,6 +58,14 @@ RUN echo '#!/bin/bash\n\
 set -e\n\
 \n\
 echo "🚀 Starting Stanford Research Opportunities App..."\n\
+\n\
+# Check if Chrome is available\n\
+if command -v google-chrome >/dev/null 2>&1; then\n\
+    echo "✅ Chrome is available for JavaScript-heavy sites"\n\
+else\n\
+    echo "⚠️  Chrome not available - will use requests-only scraping"\n\
+    export DISABLE_SELENIUM=true\n\
+fi\n\
 \n\
 # Start nginx in background (for frontend)\n\
 nginx &\n\

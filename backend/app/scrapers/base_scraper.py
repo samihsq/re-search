@@ -5,6 +5,7 @@ from typing import List, Dict, Optional, Any
 from urllib.parse import urljoin, urlparse
 from datetime import datetime, date
 import re
+import os
 
 import requests
 from bs4 import BeautifulSoup
@@ -34,6 +35,9 @@ class BaseScraper(ABC):
         self.session = requests.Session()
         self.driver = None
         
+        # Check if Selenium is disabled
+        self.selenium_disabled = os.getenv('DISABLE_SELENIUM', '').lower() == 'true'
+        
         # Configure session headers
         self.session.headers.update({
             'User-Agent': settings.user_agent,
@@ -46,8 +50,12 @@ class BaseScraper(ABC):
         
         logger.info(f"Initialized scraper for {self.domain}")
     
-    def setup_selenium_driver(self) -> webdriver.Chrome:
-        """Setup and return a Chrome WebDriver instance."""
+    def setup_selenium_driver(self) -> Optional[webdriver.Chrome]:
+        """Setup and return a Chrome WebDriver instance, or None if not available."""
+        if self.selenium_disabled:
+            logger.info("Selenium is disabled via environment variable")
+            return None
+            
         chrome_options = Options()
         chrome_options.add_argument('--headless')
         chrome_options.add_argument('--no-sandbox')
@@ -62,10 +70,12 @@ class BaseScraper(ABC):
                 options=chrome_options
             )
             driver.set_page_load_timeout(settings.request_timeout)
+            logger.info("Chrome WebDriver initialized successfully")
             return driver
         except Exception as e:
-            logger.error(f"Failed to setup Chrome driver: {e}")
-            raise
+            logger.warning(f"Failed to setup Chrome driver: {e}")
+            logger.info("Falling back to requests-only scraping")
+            return None
     
     @retry(
         stop=stop_after_attempt(3),
@@ -76,10 +86,16 @@ class BaseScraper(ABC):
         logger.info(f"Fetching page: {url}")
         
         try:
-            if use_selenium or self.config.get('requires_js', False):
-                return self._fetch_with_selenium(url)
-            else:
-                return self._fetch_with_requests(url)
+            # Check if Selenium is requested but not available
+            if (use_selenium or self.config.get('requires_js', False)) and not self.selenium_disabled:
+                selenium_result = self._fetch_with_selenium(url)
+                if selenium_result:
+                    return selenium_result
+                else:
+                    logger.warning(f"Selenium failed for {url}, falling back to requests")
+            
+            # Use requests as fallback or primary method
+            return self._fetch_with_requests(url)
         except Exception as e:
             logger.error(f"Failed to fetch {url}: {e}")
             raise
@@ -98,10 +114,14 @@ class BaseScraper(ABC):
         
         return response.text
     
-    def _fetch_with_selenium(self, url: str) -> str:
+    def _fetch_with_selenium(self, url: str) -> Optional[str]:
         """Fetch page using Selenium WebDriver."""
         if not self.driver:
             self.driver = self.setup_selenium_driver()
+            
+        if not self.driver:
+            logger.warning("Chrome WebDriver not available, cannot use Selenium")
+            return None
         
         try:
             self.driver.get(url)
@@ -118,10 +138,10 @@ class BaseScraper(ABC):
             
         except TimeoutException:
             logger.warning(f"Timeout loading {url}")
-            return self.driver.page_source if self.driver else ""
+            return self.driver.page_source if self.driver else None
         except WebDriverException as e:
             logger.error(f"WebDriver error for {url}: {e}")
-            raise
+            return None
         finally:
             # Add delay
             time.sleep(self.config.get('delay', settings.scraping_delay))
