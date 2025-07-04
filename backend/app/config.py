@@ -94,10 +94,6 @@ class Settings(BaseSettings):
         "https://careers.stanfordhealthcare.org/us/en/internships-and-fellowships"  # Stanford Healthcare
     ]
     
-    # Celery configuration
-    celery_broker_url: str = "redis://localhost:6379/0"
-    celery_result_backend: str = "redis://localhost:6379/0"
-    
     # Security
     secret_key: str = "your-secret-key-change-in-production"
     access_token_expire_minutes: int = 30
@@ -106,15 +102,13 @@ class Settings(BaseSettings):
     allowed_origins: List[str] = [
         "http://localhost:3000",
         "http://localhost:8000",
-        "https://localhost:3000"
+        "https://localhost:3000",
+        "https://localhost:8000"
     ]
     
     # Rate limiting
     rate_limit_requests: int = 100
-    rate_limit_window: int = 3600  # 1 hour in seconds
-    delay_between_requests: float = 1.0
-    max_concurrent_requests: int = 3
-    timeout_seconds: int = 30
+    rate_limit_window: int = 3600  # 1 hour
     
     # Vector search
     vector_similarity_threshold: float = 0.7
@@ -124,15 +118,17 @@ class Settings(BaseSettings):
     max_notifications_per_user_per_day: int = 10
     notification_batch_size: int = 100
     
+    # Celery configuration
+    celery_broker_url: str = "redis://localhost:6379/0"
+    celery_result_backend: str = "redis://localhost:6379/0"
+    
     # Logging
     log_level: str = "INFO"
     log_file: Optional[str] = None
     
     class Config:
         env_file = ".env"
-        env_file_encoding = "utf-8"
         case_sensitive = False
-        extra = "ignore"  # Ignore extra environment variables
 
 
 # Global settings instance

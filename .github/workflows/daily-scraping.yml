@@ -1,0 +1,65 @@
+name: Daily Scraping
+
+on:
+  schedule:
+    # Run daily at 2 AM UTC (6 PM PST)
+    - cron: "0 2 * * *"
+  workflow_dispatch: # Allow manual triggering
+
+jobs:
+  trigger-scraping:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Trigger Daily Scraping
+        run: |
+          # Wait for the app to be ready (adjust URL as needed)
+          echo "Triggering daily scraping..."
+
+          # Get the Railway URL from environment or use a default
+          RAILWAY_URL="${RAILWAY_URL:-https://your-app-name.railway.app}"
+
+          # Trigger scraping via API using the secure endpoint
+          curl -X POST \
+            "${RAILWAY_URL}/api/opportunities/scrape/trigger" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${SCRAPING_API_KEY}" \
+            --max-time 300 \
+            --retry 3 \
+            --retry-delay 10 \
+            --fail-with-body
+
+          echo "Daily scraping triggered successfully"
+
+        env:
+          RAILWAY_URL: ${{ secrets.RAILWAY_URL }}
+          SCRAPING_API_KEY: ${{ secrets.SCRAPING_API_KEY }}
+
+      - name: Health Check
+        run: |
+          echo "Checking application health..."
+          RAILWAY_URL="${RAILWAY_URL:-https://your-app-name.railway.app}"
+
+          # Check health endpoint
+          curl -f "${RAILWAY_URL}/health" || echo "Health check failed"
+
+          # Check API stats
+          curl -f "${RAILWAY_URL}/api/opportunities/stats" || echo "Stats check failed"
+
+        env:
+          RAILWAY_URL: ${{ secrets.RAILWAY_URL }}
+
+      - name: Notify on Success
+        if: success()
+        run: |
+          echo "✅ Daily scraping completed successfully"
+          # You can add Slack/Discord notifications here if needed
+
+      - name: Notify on Failure
+        if: failure()
+        run: |
+          echo "❌ Daily scraping failed"
+          # You can add failure notifications here

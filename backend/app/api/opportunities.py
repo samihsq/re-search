@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks, Header
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, func, desc, asc, text
 from typing import List, Optional, Dict, Any
 from datetime import date, datetime, timedelta
+import os
 
 from ..database import get_db
 from ..models import Opportunity as OpportunityModel, ScrapingLog
@@ -666,6 +667,23 @@ async def delete_opportunity(
 # =============================================================================
 # SCRAPING ENDPOINTS
 # =============================================================================
+
+@router.post("/scrape/trigger")
+async def trigger_scraping_via_github_actions(
+    authorization: str = Header(None),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
+    db: Session = Depends(get_db)
+):
+    """Trigger scraping via GitHub Actions with API key authentication."""
+    
+    # Verify API key
+    expected_key = os.getenv("SCRAPING_API_KEY")
+    if not expected_key or authorization != f"Bearer {expected_key}":
+        raise HTTPException(status_code=401, detail="Invalid API key")
+    
+    # Start scraping
+    return await start_scraping(background_tasks=background_tasks, db=db)
+
 
 @router.post("/scrape/start")
 async def start_scraping(
