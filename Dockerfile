@@ -86,7 +86,7 @@ fi\n\
 \n\
 # Start the FastAPI backend on port 8001 in background\n\
 echo "🔧 Starting FastAPI backend on port 8001..."\n\
-uvicorn main:app --host 127.0.0.1 --port 8001 --log-level info &\n\
+uvicorn main:app --host 0.0.0.0 --port 8001 --log-level info &\n\
 \n\
 # Wait for backend to start\n\
 sleep 5\n\
