@@ -6,7 +6,9 @@ healthcheckPath = "/health"
 healthcheckTimeout = 300
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 10
+startCommand = "/start.sh"
 
 [env]
 NODE_ENV = "production"
-DEBUG = "false" 
+DEBUG = "false"
+PORT = "8000" 

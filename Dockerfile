@@ -85,14 +85,16 @@ else\n\
 fi\n\
 \n\
 # Start nginx in background (for frontend)\n\
+echo "🌐 Starting nginx for frontend..."\n\
 nginx &\n\
 \n\
 # Wait a moment for nginx to start\n\
 sleep 2\n\
 \n\
 # Start the FastAPI backend\n\
-echo "🔧 Starting FastAPI backend..."\n\
-exec uvicorn main:app --host 0.0.0.0 --port 8000' > /start.sh \
+echo "🔧 Starting FastAPI backend on port 8000..."\n\
+echo "📍 Health check available at http://localhost:8000/health"\n\
+exec uvicorn main:app --host 0.0.0.0 --port 8000 --log-level info' > /start.sh \
     && chmod +x /start.sh
 
 USER app

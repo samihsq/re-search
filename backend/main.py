@@ -57,6 +57,11 @@ app.add_middleware(
 # Include routers
 app.include_router(opportunities.router, prefix="/api/opportunities", tags=["opportunities"])
 
+@app.get("/ping")
+async def ping():
+    """Simple ping endpoint for testing connectivity."""
+    return {"message": "pong", "timestamp": datetime.now().isoformat()}
+
 @app.get("/")
 async def root():
     """Root endpoint with API information."""
@@ -66,12 +71,24 @@ async def root():
         "status": "running",
         "timestamp": datetime.now().isoformat(),
         "docs": "/docs",
-        "health": "/health"
+        "health": "/health",
+        "ping": "/ping"
     }
 
 @app.get("/health")
 async def health_check():
     """Health check endpoint for monitoring and Railway deployment."""
+    # Simple health check that always returns 200 for Railway
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "version": "1.0.0",
+        "message": "API is running"
+    }
+
+@app.get("/health/detailed")
+async def detailed_health_check():
+    """Detailed health check with database and Redis status."""
     # Always return 200 for Railway health checks, but include component status
     db_status = "not_configured"
     try:
