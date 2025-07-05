@@ -61,38 +61,7 @@ app.add_middleware(
 # Include routers
 app.include_router(opportunities.router, prefix="/api/opportunities", tags=["opportunities"])
 
-# Mount static files (React frontend)
-if os.path.exists("/app/static"):
-    app.mount("/static", StaticFiles(directory="/app/static"), name="static")
-    
-    # Serve React app at root
-    @app.get("/")
-    async def serve_frontend():
-        """Serve the React frontend."""
-        return FileResponse("/app/static/index.html")
-    
-    # Catch-all route for React Router
-    @app.get("/{path:path}")
-    async def serve_frontend_routes(path: str):
-        """Serve React frontend for all unmatched routes (SPA routing)."""
-        # Don't serve static files or API routes through this
-        if path.startswith(("api/", "docs", "redoc", "openapi.json", "health", "ping")):
-            raise HTTPException(status_code=404, detail="Not found")
-        return FileResponse("/app/static/index.html")
-else:
-    @app.get("/")
-    async def root():
-        """Root endpoint with API information."""
-        return {
-            "message": "Stanford Research Opportunities API",
-            "version": "1.0.0",
-            "status": "running",
-            "timestamp": datetime.now().isoformat(),
-            "docs": "/docs",
-            "health": "/health",
-            "ping": "/ping"
-        }
-
+# Health check endpoints - MUST come before catch-all route
 @app.get("/ping")
 async def ping():
     """Simple ping endpoint for testing connectivity."""
@@ -155,6 +124,38 @@ async def detailed_health_check():
 async def api_health():
     """Alternative health check endpoint."""
     return await health_check()
+
+# Mount static files (React frontend)
+if os.path.exists("/app/static"):
+    app.mount("/static", StaticFiles(directory="/app/static"), name="static")
+    
+    # Serve React app at root
+    @app.get("/")
+    async def serve_frontend():
+        """Serve the React frontend."""
+        return FileResponse("/app/static/index.html")
+    
+    # Catch-all route for React Router - MUST come last
+    @app.get("/{path:path}")
+    async def serve_frontend_routes(path: str):
+        """Serve React frontend for all unmatched routes (SPA routing)."""
+        # Don't serve static files or API routes through this
+        if path.startswith(("api/", "docs", "redoc", "openapi.json", "health", "ping")):
+            raise HTTPException(status_code=404, detail="Not found")
+        return FileResponse("/app/static/index.html")
+else:
+    @app.get("/")
+    async def root():
+        """Root endpoint with API information."""
+        return {
+            "message": "Stanford Research Opportunities API",
+            "version": "1.0.0",
+            "status": "running",
+            "timestamp": datetime.now().isoformat(),
+            "docs": "/docs",
+            "health": "/health",
+            "ping": "/ping"
+        }
 
 if __name__ == "__main__":
     import uvicorn
