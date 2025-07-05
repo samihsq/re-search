@@ -19,7 +19,7 @@ lxml==4.9.3
 aiohttp==3.9.1
 
 # LLM and AI
-google-generativeai==0.3.2
+google-genai==0.5.4
 pgvector==0.2.4
 
 # Background tasks and caching
