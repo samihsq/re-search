@@ -84,17 +84,18 @@ else\n\
     export DISABLE_SELENIUM=true\n\
 fi\n\
 \n\
-# Start nginx in background (for frontend)\n\
-echo "🌐 Starting nginx for frontend..."\n\
-nginx &\n\
+# Start the FastAPI backend on port 8001 in background\n\
+echo "🔧 Starting FastAPI backend on port 8001..."\n\
+uvicorn main:app --host 127.0.0.1 --port 8001 --log-level info &\n\
 \n\
-# Wait a moment for nginx to start\n\
-sleep 2\n\
+# Wait for backend to start\n\
+sleep 5\n\
 \n\
-# Start the FastAPI backend\n\
-echo "🔧 Starting FastAPI backend on port 8000..."\n\
-echo "📍 Health check available at http://localhost:8000/health"\n\
-exec uvicorn main:app --host 0.0.0.0 --port 8000 --log-level info' > /start.sh \
+# Start nginx on port 8000 (serves frontend and proxies API)\n\
+echo "🌐 Starting nginx on port 8000..."\n\
+echo "📍 App will be available at http://localhost:8000"\n\
+echo "📍 API will be proxied to backend at http://localhost:8001"\n\
+exec nginx -g "daemon off;"' > /start.sh \
     && chmod +x /start.sh
 
 USER app
