@@ -1,6 +1,6 @@
 // API configuration for production deployment
 const getApiBaseUrl = () => {
-  // In production, nginx proxies /api to the backend
+  // In production, FastAPI serves both frontend and backend on the same port
   // So we can use relative URLs
   if (process.env.NODE_ENV === 'production') {
     return '';  // Use relative URLs in production
@@ -22,4 +22,4 @@ export const API_ENDPOINTS = {
   // Add other endpoints as needed
 };
 
-export default API_BASE_URL; 
+export default API_ENDPOINTS; 

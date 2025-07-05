@@ -2,7 +2,7 @@ import axios from 'axios';
 
 // Dynamic API base URL that works both locally and in production
 const getApiBaseUrl = () => {
-  // In production, nginx proxies /api to the backend
+  // In production, FastAPI serves both frontend and backend on same port
   if (process.env.NODE_ENV === 'production') {
     return '/api';  // Use relative URLs in production
   }
@@ -10,8 +10,8 @@ const getApiBaseUrl = () => {
   if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
     return 'http://localhost:8000/api';
   }
-  // Otherwise, use the same host as the frontend but port 8000
-  return `http://${window.location.hostname}:8000/api`;
+  // Otherwise, use the same host as the frontend
+  return `/api`;
 };
 
 const API_BASE_URL = getApiBaseUrl();

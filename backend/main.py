@@ -9,6 +9,10 @@ from app.api import opportunities
 from app.database import engine, Base
 from app.config import settings
 
+# Add static file serving imports
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+
 # Create database tables
 try:
     Base.metadata.create_all(bind=engine)
@@ -57,23 +61,42 @@ app.add_middleware(
 # Include routers
 app.include_router(opportunities.router, prefix="/api/opportunities", tags=["opportunities"])
 
+# Mount static files (React frontend)
+if os.path.exists("/app/static"):
+    app.mount("/static", StaticFiles(directory="/app/static"), name="static")
+    
+    # Serve React app at root
+    @app.get("/")
+    async def serve_frontend():
+        """Serve the React frontend."""
+        return FileResponse("/app/static/index.html")
+    
+    # Catch-all route for React Router
+    @app.get("/{path:path}")
+    async def serve_frontend_routes(path: str):
+        """Serve React frontend for all unmatched routes (SPA routing)."""
+        # Don't serve static files or API routes through this
+        if path.startswith(("api/", "docs", "redoc", "openapi.json", "health", "ping")):
+            raise HTTPException(status_code=404, detail="Not found")
+        return FileResponse("/app/static/index.html")
+else:
+    @app.get("/")
+    async def root():
+        """Root endpoint with API information."""
+        return {
+            "message": "Stanford Research Opportunities API",
+            "version": "1.0.0",
+            "status": "running",
+            "timestamp": datetime.now().isoformat(),
+            "docs": "/docs",
+            "health": "/health",
+            "ping": "/ping"
+        }
+
 @app.get("/ping")
 async def ping():
     """Simple ping endpoint for testing connectivity."""
     return {"message": "pong", "timestamp": datetime.now().isoformat()}
-
-@app.get("/")
-async def root():
-    """Root endpoint with API information."""
-    return {
-        "message": "Stanford Research Opportunities API",
-        "version": "1.0.0",
-        "status": "running",
-        "timestamp": datetime.now().isoformat(),
-        "docs": "/docs",
-        "health": "/health",
-        "ping": "/ping"
-    }
 
 @app.get("/health")
 async def health_check():
