@@ -97,6 +97,7 @@ class Settings(BaseSettings):
     # Security
     secret_key: str = "your-secret-key-change-in-production"
     access_token_expire_minutes: int = 30
+    scraping_api_key: Optional[str] = Field(default=None, env="SCRAPING_API_KEY")
     
     # CORS
     allowed_origins: List[str] = [
