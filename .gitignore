@@ -17,3 +17,7 @@ backend/.env
 /frontend/node_modules
 .env.backup
 backend/environment.example
+deploy.sh
+QUICK_START.md
+setup-env.sh
+DEPLOYMENT_GUIDE.md

@@ -5,6 +5,7 @@ from sqlalchemy.pool import QueuePool
 import os
 from dotenv import load_dotenv
 from loguru import logger
+from fastapi import HTTPException
 
 load_dotenv()
 
@@ -15,18 +16,24 @@ DATABASE_URL = os.getenv(
 )
 
 # Create engine with connection pooling
-engine = create_engine(
-    DATABASE_URL,
-    poolclass=QueuePool,
-    pool_size=20,
-    max_overflow=0,
-    pool_pre_ping=True,
-    pool_recycle=300,
-    echo=os.getenv("DB_ECHO", "false").lower() == "true"
-)
+try:
+    engine = create_engine(
+        DATABASE_URL,
+        poolclass=QueuePool,
+        pool_size=20,
+        max_overflow=0,
+        pool_pre_ping=True,
+        pool_recycle=300,
+        echo=os.getenv("DB_ECHO", "false").lower() == "true"
+    )
+    logger.info(f"Database engine created successfully")
+except Exception as e:
+    logger.warning(f"Database engine creation failed: {e}")
+    # Create a dummy engine for development
+    engine = None
 
 # Create SessionLocal class
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine) if engine else None
 
 # Create Base class
 Base = declarative_base()
@@ -37,6 +44,8 @@ PGVECTOR_AVAILABLE = False
 
 def get_db():
     """Dependency to get database session."""
+    if not SessionLocal:
+        raise HTTPException(status_code=503, detail="Database not configured")
     db = SessionLocal()
     try:
         yield db
@@ -46,8 +55,16 @@ def get_db():
 
 def create_tables():
     """Create all tables in the database."""
-    from .models import Base
-    Base.metadata.create_all(bind=engine)
+    if not engine:
+        logger.warning("Cannot create tables - database engine not available")
+        return False
+    try:
+        from .models import Base
+        Base.metadata.create_all(bind=engine)
+        return True
+    except Exception as e:
+        logger.error(f"Failed to create tables: {e}")
+        return False
 
 
 def setup_pgvector():
