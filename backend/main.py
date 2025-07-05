@@ -65,65 +65,23 @@ app.include_router(opportunities.router, prefix="/api/opportunities", tags=["opp
 @app.get("/ping")
 async def ping():
     """Simple ping endpoint for testing connectivity."""
-    return {"message": "pong", "timestamp": datetime.now().isoformat()}
+    return {"message": "pong"}
 
 @app.get("/health")
 async def health_check():
     """Health check endpoint for monitoring and Railway deployment."""
-    # Simple health check that always returns 200 for Railway
-    return {
-        "status": "healthy",
-        "timestamp": datetime.now().isoformat(),
-        "version": "1.0.0",
-        "message": "API is running"
-    }
+    # Ultra-simple health check that always returns 200 for Railway
+    return {"status": "ok"}
 
-@app.get("/health/detailed")
-async def detailed_health_check():
-    """Detailed health check with database and Redis status."""
-    # Always return 200 for Railway health checks, but include component status
-    db_status = "not_configured"
-    try:
-        # Test database connection
-        from app.database import SessionLocal
-        if SessionLocal:
-            db = SessionLocal()
-            db.execute("SELECT 1")
-            db.close()
-            db_status = "healthy"
-        else:
-            db_status = "not_configured - add DATABASE_URL environment variable"
-    except Exception as e:
-        db_status = f"unhealthy: {str(e)}"
-    
-    # Test Redis connection (if available)
-    redis_status = "not_configured"
-    try:
-        import redis
-        r = redis.from_url(settings.redis_url)
-        r.ping()
-        redis_status = "healthy"
-    except Exception as e:
-        redis_status = f"unhealthy: {str(e)}"
-    
-    health_data = {
-        "status": "healthy",  # Always healthy for Railway
-        "timestamp": datetime.now().isoformat(),
-        "version": "1.0.0",
-        "database": db_status,
-        "redis": redis_status,
-        "environment": "production" if not settings.debug else "development",
-        "llm_parsing": "enabled" if settings.enable_llm_parsing else "disabled",
-        "message": "API is running. Database and Redis status shown separately."
-    }
-    
-    # Always return 200 for Railway health checks
-    return JSONResponse(content=health_data, status_code=200)
-
-@app.get("/api/health")
-async def api_health():
+@app.get("/healthz")
+async def healthz():
     """Alternative health check endpoint."""
-    return await health_check()
+    return {"status": "ok"}
+
+@app.get("/ready")
+async def ready():
+    """Readiness check endpoint."""
+    return {"status": "ready"}
 
 # Mount static files (React frontend)
 if os.path.exists("/app/static"):
