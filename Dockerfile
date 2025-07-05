@@ -41,9 +41,26 @@ COPY backend/ .
 COPY --from=frontend-build /frontend/build /usr/share/nginx/html
 COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
 
-# Create non-root user
+# Create nginx directories and set permissions
+RUN mkdir -p /var/lib/nginx/body \
+    && mkdir -p /var/lib/nginx/fastcgi \
+    && mkdir -p /var/lib/nginx/proxy \
+    && mkdir -p /var/lib/nginx/scgi \
+    && mkdir -p /var/lib/nginx/uwsgi \
+    && mkdir -p /var/cache/nginx \
+    && mkdir -p /var/log/nginx \
+    && mkdir -p /run \
+    && touch /var/run/nginx.pid
+
+# Create non-root user and set permissions
 RUN useradd --create-home --shell /bin/bash app \
-    && chown -R app:app /app
+    && chown -R app:app /app \
+    && chown -R app:app /var/lib/nginx \
+    && chown -R app:app /var/cache/nginx \
+    && chown -R app:app /var/log/nginx \
+    && chown -R app:app /usr/share/nginx/html \
+    && chown app:app /var/run/nginx.pid \
+    && chown app:app /run
 
 # Expose port
 EXPOSE 8000
