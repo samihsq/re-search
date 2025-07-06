@@ -2,9 +2,9 @@ import axios from 'axios';
 
 // Dynamic API base URL that works both locally and in production
 const getApiBaseUrl = () => {
-  // In production, FastAPI serves both frontend and backend on same port
+  // In production (GitHub Pages), use the deployed AWS API
   if (process.env.NODE_ENV === 'production') {
-    return '/api';  // Use relative URLs in production
+    return 'https://nzl4dbhfje.execute-api.us-west-2.amazonaws.com/api';  // Your deployed API
   }
   // If we're in development and on localhost, use localhost
   if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {

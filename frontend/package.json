@@ -2,6 +2,7 @@
   "name": "stanford-research-opportunities-frontend",
   "version": "1.0.0",
   "description": "Frontend for Stanford Research Opportunities Aggregator",
+  "homepage": "https://samihsq.github.io/re-search",
   "private": true,
   "dependencies": {
     "@emotion/react": "^11.11.1",

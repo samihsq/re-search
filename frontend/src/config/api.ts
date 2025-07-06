@@ -1,9 +1,8 @@
 // API configuration for production deployment
 const getApiBaseUrl = () => {
-  // In production, FastAPI serves both frontend and backend on the same port
-  // So we can use relative URLs
+  // In production (GitHub Pages), use the deployed AWS API
   if (process.env.NODE_ENV === 'production') {
-    return '';  // Use relative URLs in production
+    return 'https://nzl4dbhfje.execute-api.us-west-2.amazonaws.com';  // Your deployed API
   }
   // In development, use localhost
   return process.env.REACT_APP_API_URL || 'http://localhost:8000';
