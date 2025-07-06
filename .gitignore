@@ -21,3 +21,9 @@ deploy.sh
 QUICK_START.md
 setup-env.sh
 DEPLOYMENT_GUIDE.md
+/cdk_venv
+/lambda_package
+/temp_deps
+/cdk.out
+.env.production
+GITHUB_ACTIONS_SETUP.md
