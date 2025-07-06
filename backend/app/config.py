@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     scraping_delay: float = 2.0  # Delay between requests in seconds
     max_retries: int = 3
     request_timeout: int = 30
+    max_concurrent_requests: int = 5  # Maximum concurrent scraping requests
     user_agent: str = "Stanford Research Opportunities Bot/1.0"
     
     # Target websites for scraping - Updated to focus on specific opportunities

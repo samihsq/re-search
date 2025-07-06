@@ -1,65 +1,131 @@
-name: Daily Scraping
+name: Daily Stanford Research Scraper
 
 on:
   schedule:
-    # Run daily at 2 AM UTC (6 PM PST)
-    - cron: "0 2 * * *"
+    # Run daily at 6:00 AM UTC (10:00 PM PST / 11:00 PM PDT)
+    - cron: "0 6 * * *"
   workflow_dispatch: # Allow manual triggering
+    inputs:
+      deep_llm:
+        description: "Use deep LLM discovery"
+        required: false
+        default: false
+        type: boolean
+      update_urls:
+        description: "Update URL configuration"
+        required: false
+        default: false
+        type: boolean
 
 jobs:
-  trigger-scraping:
+  scrape:
     runs-on: ubuntu-latest
 
+    environment: production # Use GitHub environment for secrets
+
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Trigger Daily Scraping
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.9"
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('backend/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
         run: |
-          # Wait for the app to be ready (adjust URL as needed)
-          echo "Triggering daily scraping..."
+          cd backend
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install psycopg2-binary  # Ensure PostgreSQL support
 
-          # Get the Railway URL from environment or use a default
-          RAILWAY_URL="${RAILWAY_URL:-https://your-app-name.railway.app}"
-
-          # Trigger scraping via API using the secure endpoint
-          curl -X POST \
-            "${RAILWAY_URL}/api/opportunities/scrape/trigger" \
-            -H "Content-Type: application/json" \
-            -H "Authorization: Bearer ${SCRAPING_API_KEY}" \
-            --max-time 300 \
-            --retry 3 \
-            --retry-delay 10 \
-            --fail-with-body
-
-          echo "Daily scraping triggered successfully"
-
-        env:
-          RAILWAY_URL: ${{ secrets.RAILWAY_URL }}
-          SCRAPING_API_KEY: ${{ secrets.SCRAPING_API_KEY }}
-
-      - name: Health Check
+      - name: Set up environment variables
         run: |
-          echo "Checking application health..."
-          RAILWAY_URL="${RAILWAY_URL:-https://your-app-name.railway.app}"
+          echo "DATABASE_URL=${{ secrets.DATABASE_URL }}" >> $GITHUB_ENV
+          echo "REDIS_URL=${{ secrets.REDIS_URL }}" >> $GITHUB_ENV
+          echo "GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}" >> $GITHUB_ENV
+          echo "SCRAPING_API_KEY=${{ secrets.SCRAPING_API_KEY }}" >> $GITHUB_ENV
+          echo "SECRET_KEY=${{ secrets.SECRET_KEY }}" >> $GITHUB_ENV
+          echo "LOG_LEVEL=INFO" >> $GITHUB_ENV
+          echo "ENABLE_LLM_PARSING=true" >> $GITHUB_ENV
+          echo "DISABLE_SELENIUM=true" >> $GITHUB_ENV
+          echo "PYTHONPATH=${{ github.workspace }}/backend" >> $GITHUB_ENV
 
-          # Check health endpoint
-          curl -f "${RAILWAY_URL}/health" || echo "Health check failed"
-
-          # Check API stats
-          curl -f "${RAILWAY_URL}/api/opportunities/stats" || echo "Stats check failed"
-
-        env:
-          RAILWAY_URL: ${{ secrets.RAILWAY_URL }}
-
-      - name: Notify on Success
-        if: success()
+      - name: Setup database tables
         run: |
-          echo "✅ Daily scraping completed successfully"
-          # You can add Slack/Discord notifications here if needed
+          cd backend
+          echo "🔧 Setting up database tables..."
+          python setup_database.py
 
-      - name: Notify on Failure
+      - name: Run Stanford research scraper
+        id: scrape
+        run: |
+          cd backend
+
+          # Build command with conditional flags
+          CMD="python run_daily_scraper.py"
+
+          # Add deep LLM flag if requested or if this is a scheduled run
+          if [ "${{ github.event.inputs.deep_llm }}" = "true" ] || [ "${{ github.event_name }}" = "schedule" ]; then
+            CMD="$CMD --deep-llm"
+          fi
+
+          # Add update URLs flag if requested
+          if [ "${{ github.event.inputs.update_urls }}" = "true" ]; then
+            CMD="$CMD --update-urls"
+          fi
+
+          echo "🚀 Running command: $CMD"
+          $CMD
+
+      - name: Upload scraping logs
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: scraping-logs-${{ github.run_number }}
+          path: |
+            backend/scrape_output.json
+            backend/url_validation_report_*.json
+          retention-days: 30
+
+      - name: Notify on failure
         if: failure()
         run: |
-          echo "❌ Daily scraping failed"
-          # You can add failure notifications here
+          echo "🚨 Scraping job failed! Check the logs above for details."
+          echo "::error::Daily scraping job failed"
+
+      - name: Create job summary
+        if: always()
+        run: |
+          echo "## 📊 Daily Scraping Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status**: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Date**: $(date)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Run ID**: ${{ github.run_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Workflow**: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Add scraper outputs if available
+          if [ -n "${{ steps.scrape.outputs.total_opportunities }}" ]; then
+            echo "### 📈 Results" >> $GITHUB_STEP_SUMMARY
+            echo "- **Total Opportunities**: ${{ steps.scrape.outputs.total_opportunities }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **New Opportunities**: ${{ steps.scrape.outputs.new_opportunities }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Updated Opportunities**: ${{ steps.scrape.outputs.updated_opportunities }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Successful Scrapes**: ${{ steps.scrape.outputs.successful_scrapes }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Failed Scrapes**: ${{ steps.scrape.outputs.failed_scrapes }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **LLM Enhanced**: ${{ steps.scrape.outputs.llm_enhanced }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Total Time**: ${{ steps.scrape.outputs.total_time }}s" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "### 🔗 Links" >> $GITHUB_STEP_SUMMARY
+          echo "- **API URL**: https://5qpa61z45e.execute-api.us-west-2.amazonaws.com/api/opportunities" >> $GITHUB_STEP_SUMMARY
+          echo "- **Health Check**: https://5qpa61z45e.execute-api.us-west-2.amazonaws.com/health" >> $GITHUB_STEP_SUMMARY
+          echo "- **Logs**: Available in job artifacts" >> $GITHUB_STEP_SUMMARY
