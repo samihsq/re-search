@@ -4,14 +4,14 @@ import axios from 'axios';
 const getApiBaseUrl = () => {
   // In production (GitHub Pages), use the deployed AWS API
   if (process.env.NODE_ENV === 'production') {
-    return 'https://nzl4dbhfje.execute-api.us-west-2.amazonaws.com/api';  // Your deployed API
+    return 'https://nzl4dbhfje.execute-api.us-west-2.amazonaws.com';  // Remove /api from base URL
   }
   // If we're in development and on localhost, use localhost
   if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-    return 'http://localhost:8000/api';
+    return 'http://localhost:8000';  // Remove /api from base URL
   }
   // Otherwise, use the same host as the frontend
-  return `/api`;
+  return '';  // Use relative paths for same-host deployment
 };
 
 const API_BASE_URL = getApiBaseUrl();
@@ -179,7 +179,7 @@ class ApiService {
     sort_order?: string;
     include_inactive?: boolean;
   }): Promise<PaginatedOpportunities> {
-    const response = await api.get('/opportunities/', { params });
+    const response = await api.get('/api/opportunities', { params });
     
     // Handle case where API returns direct array or paginated response
     if (Array.isArray(response.data)) {
@@ -198,22 +198,22 @@ class ApiService {
   }
 
   async getOpportunity(id: number): Promise<Opportunity> {
-    const response = await api.get(`/opportunities/${id}`);
+    const response = await api.get(`/api/opportunities/${id}`);
     return this.transformOpportunity(response.data);
   }
 
   async createOpportunity(opportunity: Partial<Opportunity>): Promise<Opportunity> {
-    const response = await api.post('/opportunities/', opportunity);
+    const response = await api.post('/api/opportunities', opportunity);
     return this.transformOpportunity(response.data);
   }
 
   async updateOpportunity(id: number, opportunity: Partial<Opportunity>): Promise<Opportunity> {
-    const response = await api.put(`/opportunities/${id}`, opportunity);
+    const response = await api.put(`/api/opportunities/${id}`, opportunity);
     return this.transformOpportunity(response.data);
   }
 
   async deleteOpportunity(id: number): Promise<void> {
-    await api.delete(`/opportunities/${id}`);
+    await api.delete(`/api/opportunities/${id}`);
   }
 
   // New LLM-powered search (RAG)
@@ -228,7 +228,7 @@ class ApiService {
       params.append('use_vector_search', 'false'); // Backend param name
     }
     
-    const response = await api.post(`/opportunities/search/llm?${params.toString()}`);
+    const response = await api.post(`/api/opportunities/search/llm?${params.toString()}`);
     
     // The backend returns different field names, so we need to transform them
     const backendData = response.data;
@@ -243,7 +243,7 @@ class ApiService {
 
   // New all-pages search
   async searchAllPages(request: AllPagesSearchRequest): Promise<AllPagesSearchResponse> {
-    const response = await api.post('/opportunities/search/all-pages', request);
+    const response = await api.post('/api/opportunities/search/all-pages', request);
     return {
       ...response.data,
       opportunities: this.transformOpportunities(response.data.opportunities || [])
@@ -252,31 +252,31 @@ class ApiService {
 
   // New scraping endpoints
   async startScraping(): Promise<ScrapingResponse> {
-    const response = await api.post('/opportunities/scrape/start');
+    const response = await api.post('/api/opportunities/scrape/start');
     return response.data;
   }
 
   async startEnhancedScraping(): Promise<ScrapingResponse> {
-    const response = await api.post('/opportunities/scrape-enhanced');
+    const response = await api.post('/api/opportunities/scrape-enhanced');
     return response.data;
   }
 
   // Enhanced statistics
   async getStats(): Promise<OpportunityStats> {
-    const response = await api.get('/opportunities/stats');
+    const response = await api.get('/api/opportunities/stats');
     return response.data;
   }
 
   // Admin database management endpoints
   async deleteAllOpportunities(confirmation: string): Promise<{ message: string; deleted_count: number }> {
-    const response = await api.delete('/opportunities/admin/delete-all', {
+    const response = await api.delete('/api/opportunities/admin/delete-all', {
       data: { confirmation }
     });
     return response.data;
   }
 
   async deleteInactiveOpportunities(): Promise<{ message: string; deleted_count: number }> {
-    const response = await api.delete('/opportunities/admin/delete-inactive');
+    const response = await api.delete('/api/opportunities/admin/delete-inactive');
     return response.data;
   }
 
@@ -285,14 +285,14 @@ class ApiService {
     updated_count: number; 
     opportunity_ids: number[] 
   }> {
-    const response = await api.post('/opportunities/admin/bulk-deactivate', {
+    const response = await api.post('/api/opportunities/admin/bulk-deactivate', {
       opportunity_ids
     });
     return response.data;
   }
 
   async resetDatabase(confirmation: string): Promise<{ message: string; deleted_count: number }> {
-    const response = await api.post('/opportunities/admin/reset-database', {
+    const response = await api.post('/api/opportunities/admin/reset-database', {
       confirmation
     });
     return response.data;
