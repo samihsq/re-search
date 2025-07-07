@@ -82,7 +82,7 @@ export const OpportunityCard: React.FC<OpportunityCardProps> = ({
         flexDirection: "column",
         opacity: opportunity.is_active ? 1 : 0.7,
         borderLeft: opportunity.is_active
-          ? "4px solid #1976d2"
+          ? "4px solid#248910"
           : "4px solid #757575",
       }}
     >
