@@ -484,8 +484,8 @@ def llm_search():
         for word in search_words:
             filters.append(Opportunity.title.ilike(f"%{word}%"))
             filters.append(Opportunity.description.ilike(f"%{word}%"))
-            # Also check if any of the tags match the word
-            filters.append(Opportunity.tags.any(word, operator=sql.operators.ilike))
+            # Also check if any of the tags match the word - use array_to_string for broader compatibility
+            filters.append(func.array_to_string(Opportunity.tags, ' ').ilike(f"%{word}%"))
 
         search_filter = or_(*filters)
         
