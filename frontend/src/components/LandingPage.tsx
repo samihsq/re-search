@@ -80,7 +80,11 @@ const LandingPage: React.FC = () => {
         <Typography
           variant="h1"
           sx={{
-            fontSize: "8rem",
+            fontSize: {
+              xs: "4rem", // for extra small screens (phones)
+              sm: "6rem", // for small screens (tablets)
+              md: "8rem", // for medium screens and up (desktops)
+            },
             fontWeight: "bold",
             color: "white",
             textShadow: "2px 2px 4px rgba(0,0,0,0.3)",

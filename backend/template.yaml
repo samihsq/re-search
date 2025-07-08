@@ -116,11 +116,6 @@ Resources:
     Properties:
       StageName: !Ref Stage
       Description: !Sub "Stanford Research Opportunities API - ${Stage}"
-      Cors:
-        AllowMethods: "'GET,POST,PUT,DELETE,OPTIONS'"
-        AllowHeaders: "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token,X-Amz-User-Agent,X-API-Key'"
-        AllowOrigin: "'*'"
-        AllowCredentials: false
       # Enable API Gateway logs
       # AccessLogSetting:
       #   DestinationArn: !GetAtt ApiGatewayLogGroup.Arn
