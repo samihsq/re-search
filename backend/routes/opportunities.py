@@ -4,10 +4,12 @@ Converted from FastAPI opportunities router
 """
 
 from flask import Blueprint, request, jsonify, current_app
-from sqlalchemy import and_, or_, func, desc, asc, text
+from sqlalchemy import and_, or_, func, desc, asc, text, sql
 from typing import List, Optional, Dict, Any
 from datetime import date, datetime, timedelta
 import os
+import json
+import re
 
 # Optional Gemini support (same style as llm_validation_service)
 try:
@@ -66,6 +68,7 @@ def get_opportunities():
     search = get_query_param('search')
     sort_by = get_query_param('sort_by', 'scraped_at')
     sort_order = get_query_param('sort_order', 'desc')
+    tags = get_query_param('tags')  # Comma-separated
     
     # Validate parameters
     if skip < 0:
@@ -87,6 +90,12 @@ def get_opportunities():
         
         if opportunity_type:
             query = query.filter(Opportunity.opportunity_type == opportunity_type)
+        
+        if tags:
+            tag_list = [tag.strip() for tag in tags.split(',') if tag.strip()]
+            if tag_list:
+                # Use array overlap operator '&&' for PostgreSQL
+                query = query.filter(Opportunity.tags.op('&&')(tag_list))
         
         if has_funding is not None:
             if has_funding:
@@ -461,8 +470,48 @@ def llm_search():
             "processing_time": 0
         })
 
+    # 1) Retrieve relevant opportunities from the database first (RAG pattern)
     # ------------------------------------------------------------------
-    # 1) Try Gemini semantic search
+    try:
+        # Break search query into words for a broader search
+        search_words = [word.strip() for word in query_str.split() if len(word.strip()) > 2]
+        
+        if not search_words:
+             # Fallback to the full query string if no valid words are found
+            search_words = [query_str.strip()]
+
+        filters = []
+        for word in search_words:
+            filters.append(Opportunity.title.ilike(f"%{word}%"))
+            filters.append(Opportunity.description.ilike(f"%{word}%"))
+            # Also check if any of the tags match the word
+            filters.append(Opportunity.tags.any(word, operator=sql.operators.ilike))
+
+        search_filter = or_(*filters)
+        
+        # We retrieve a larger set from the DB to give the LLM more context
+        matches_q = db.session.query(Opportunity).filter(
+            search_filter,
+            Opportunity.is_active == True
+        ).order_by(desc(Opportunity.scraped_at)).limit(100) # Retrieve up to 100 for context
+        
+        context_opportunities = [opp.to_dict() for opp in matches_q]
+        if not context_opportunities:
+             return jsonify({
+                "results": [],
+                "total_found": 0,
+                "ai_explanation": "No relevant opportunities found in the database for your query.",
+                "query": query_str,
+                "processing_time": (datetime.now() - start_time).total_seconds()
+            })
+
+    except Exception as e:
+        current_app.logger.error(f"RAG retrieval step failed: {e}")
+        return jsonify({"error": "Failed to retrieve opportunities from database", "message": str(e)}), 500
+
+
+    # ------------------------------------------------------------------
+    # 2) Use Gemini to process the retrieved opportunities
     # ------------------------------------------------------------------
     gemini_key = os.getenv("GEMINI_API_KEY")
     if GEMINI_AVAILABLE and gemini_key:
@@ -470,77 +519,59 @@ def llm_search():
             client = genai.Client(api_key=gemini_key)
             model_name = os.getenv("GEMINI_MODEL", "gemma-3-27b-it")
 
+            # Convert context opportunities to a string format for the prompt
+            context_str = json.dumps(context_opportunities, indent=2)
+
             sys_prompt = (
-                "You are a helpful assistant that turns a user search query into a JSON "
-                "response containing a summary and a list of Stanford research "
-                "opportunity cards. Output *ONLY* valid JSON with this exact schema:\n\n"
+                "You are a helpful assistant that analyzes a list of Stanford research "
+                "opportunities based on a user's query. Your task is to return a JSON object "
+                "containing a concise summary of your findings and a list of the IDs of the most "
+                "relevant opportunities from the provided list. "
+                "Output *ONLY* valid JSON with this exact schema:\n\n"
                 "{\n"
-                "  \"ai_explanation\": <string – 1-2 sentence summary of the kinds of opportunities found in the list below. Mention specific themes or departments if they stand out.>,\n"
-                "  \"opportunities\": [\n"
-                "    {\n"
-                "      \"title\": <string>,\n"
-                "      \"description\": <string>,\n"
-                "      \"department\": <string or null>,\n"
-                "      \"opportunity_type\": <string or null>,\n"
-                "      \"deadline\": <YYYY-MM-DD or null>,\n"
-                "      \"funding_amount\": <string or null>,\n"
-                "      \"application_url\": <string – https URL>,\n"
-                "      \"tags\": [ <string>, … ]\n"
-                "    } /* repeat up to {limit} items */\n"
-                "  ]\n"
+                "  \"ai_explanation\": <string – 1-2 sentence summary of why you chose these opportunities.>,\n"
+                "  \"relevant_opportunity_ids\": [ <list of integer IDs of the most relevant opportunities from the context> ]\n"
                 "}\n\n"
-                "If you don't know a field, output null.\n"
+                f"Analyze the provided list and find the opportunities most relevant to the user's search query. Return up to {limit} of the best matches.\n"
+                "Do NOT make up any opportunities or IDs. Use only the data from the provided list.\n"
                 "Do NOT wrap the JSON in markdown fences or any extra text."
             )
 
-            user_prompt = f"Search query: {query_str}\nMax results: {limit}"
+            user_prompt = f"Search query: {query_str}\n\nHere are the opportunities to analyze:\n{context_str}"
 
             response = client.models.generate_content(
                 model=model_name,
                 contents=[sys_prompt, user_prompt],
                 config=types.GenerateContentConfig(
                     temperature=0.1,
-                    max_output_tokens=4096,
+                    max_output_tokens=8192,
                 ),
-                # request_options={'timeout': 120}
             )
             raw_text = response.text.strip()
 
             # Attempt to parse JSON out of reply – Gemini might sometimes wrap it
-            import json, re
             try:
                 parsed_json = json.loads(raw_text)
             except json.JSONDecodeError:
                 # Try to extract the first JSON object in the text
-                match = re.search(r"{.*}", raw_text, re.S)
+                match = re.search(r"\{.*\}", raw_text, re.S)
                 if match:
                     parsed_json = json.loads(match.group(0))
                 else:
                     raise
-
-            opp_cards = parsed_json.get("opportunities", [])[:limit]
-            # Ensure each card has required keys so frontend doesn't crash
-            standardised = []
-            for card in opp_cards:
-                standardised.append({
-                    "title": card.get("title", "Untitled"),
-                    "description": card.get("description", ""),
-                    "department": card.get("department"),
-                    "opportunity_type": card.get("opportunity_type"),
-                    "deadline": card.get("deadline"),
-                    "funding_amount": card.get("funding_amount"),
-                    "application_url": card.get("application_url"),
-                    "source_url": card.get("application_url"),  # alias for FE mapping
-                    "tags": card.get("tags", []),
-                    "is_active": True,
-                    # minimal extras for transformOpportunity()
-                    "scraped_at": datetime.now().isoformat()
-                })
-
+            
+            relevant_ids = parsed_json.get("relevant_opportunity_ids", [])
+            
+            # Create a dictionary for quick lookups
+            context_dict = {opp['id']: opp for opp in context_opportunities}
+            
+            # Filter the original context opportunities to only include the ones the LLM selected, preserving order
+            final_opportunities = [context_dict[id] for id in relevant_ids if id in context_dict]
+            
             elapsed_s = (datetime.now() - start_time).total_seconds()
             return jsonify({
-                "results": standardised,
-                "total_found": len(standardised),
+                "results": final_opportunities,
+                "total_found": len(final_opportunities),
                 "ai_explanation": parsed_json.get("ai_explanation", ""),
                 "query": query_str,
                 "processing_time": elapsed_s

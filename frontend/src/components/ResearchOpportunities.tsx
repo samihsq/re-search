@@ -12,6 +12,7 @@ import {
   CircularProgress,
   Alert,
   Paper,
+  Autocomplete,
 } from "@mui/material";
 import { Search as SearchIcon } from "@mui/icons-material";
 import { apiService, Opportunity } from "../services/api";
@@ -23,14 +24,20 @@ const ResearchOpportunities: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [departmentFilter, setDepartmentFilter] = useState("");
-  const [categoryFilter, setCategoryFilter] = useState("");
+  const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
 
   // Get unique departments and categories for filtering
   const departments = Array.from(
     new Set(opportunities.map((opp) => opp.department).filter(Boolean))
   ).sort();
   const categories = Array.from(
-    new Set(opportunities.map((opp) => opp.category).filter(Boolean))
+    new Set(
+      opportunities.map((opp) => opp.category).filter((c): c is string => !!c)
+    )
+  ).sort();
+  const allTags = Array.from(
+    new Set(opportunities.flatMap((opp) => opp.tags || []))
   ).sort();
 
   useEffect(() => {
@@ -67,11 +74,20 @@ const ResearchOpportunities: React.FC = () => {
     const matchesDepartment =
       departmentFilter === "" || opp.department === departmentFilter;
 
-    const matchesCategory =
-      categoryFilter === "" || opp.category === categoryFilter;
+    const matchesType =
+      selectedTypes.length === 0 ||
+      (opp.category && selectedTypes.includes(opp.category));
+
+    const matchesTags =
+      selectedTags.length === 0 ||
+      (opp.tags && opp.tags.some((tag) => selectedTags.includes(tag)));
 
     return (
-      matchesSearch && matchesDepartment && matchesCategory && opp.is_active
+      matchesSearch &&
+      matchesDepartment &&
+      matchesType &&
+      matchesTags &&
+      opp.is_active
     );
   });
 
@@ -108,7 +124,7 @@ const ResearchOpportunities: React.FC = () => {
       {/* Search and Filter Controls */}
       <Paper elevation={1} sx={{ p: 3, mb: 4 }}>
         <Grid container spacing={3}>
-          <Grid item xs={12} md={4}>
+          <Grid item xs={12} md={3}>
             <TextField
               fullWidth
               label="Search"
@@ -122,7 +138,7 @@ const ResearchOpportunities: React.FC = () => {
               }}
             />
           </Grid>
-          <Grid item xs={12} md={4}>
+          <Grid item xs={12} md={3}>
             <FormControl fullWidth>
               <InputLabel>Department</InputLabel>
               <Select
@@ -139,22 +155,27 @@ const ResearchOpportunities: React.FC = () => {
               </Select>
             </FormControl>
           </Grid>
-          <Grid item xs={12} md={4}>
-            <FormControl fullWidth>
-              <InputLabel>Category</InputLabel>
-              <Select
-                value={categoryFilter}
-                label="Category"
-                onChange={(e) => setCategoryFilter(e.target.value)}
-              >
-                <MenuItem value="">All Categories</MenuItem>
-                {categories.map((cat) => (
-                  <MenuItem key={cat} value={cat}>
-                    {cat}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
+          <Grid item xs={12} md={3}>
+            <Autocomplete
+              multiple
+              options={categories}
+              value={selectedTypes}
+              onChange={(event, newValue) => {
+                setSelectedTypes(newValue);
+              }}
+              renderInput={(params) => <TextField {...params} label="Type" />}
+            />
+          </Grid>
+          <Grid item xs={12} md={3}>
+            <Autocomplete
+              multiple
+              options={allTags}
+              value={selectedTags}
+              onChange={(event, newValue) => {
+                setSelectedTags(newValue);
+              }}
+              renderInput={(params) => <TextField {...params} label="Tags" />}
+            />
           </Grid>
         </Grid>
       </Paper>
@@ -164,7 +185,10 @@ const ResearchOpportunities: React.FC = () => {
         <Typography variant="h6">
           {filteredOpportunities.length} opportunities found
         </Typography>
-        {searchTerm || departmentFilter || categoryFilter ? (
+        {searchTerm ||
+        departmentFilter ||
+        selectedTypes.length > 0 ||
+        selectedTags.length > 0 ? (
           <Typography variant="body2" color="text.secondary">
             Filtered from {opportunities.length} total opportunities
           </Typography>

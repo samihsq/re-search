@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   Container,
   Typography,
@@ -23,6 +23,7 @@ import {
   Skeleton,
   Card,
   CardContent,
+  Autocomplete,
 } from "@mui/material";
 import {
   Search as SearchIcon,
@@ -70,11 +71,15 @@ const MarkdownText: React.FC<{ children: string }> = ({ children }) => {
 const SimpleResearchOpportunities: React.FC = () => {
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isSearching, setIsSearching] = useState(false);
+  const [cooldown, setCooldown] = useState(0);
+  const cooldownTimer = useRef<NodeJS.Timeout>();
   const [error, setError] = useState<string | null>(null);
-  const [searchTerm, setSearchTerm] = useState("");
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [submittedSearchTerm, setSubmittedSearchTerm] = useState(""); // For displaying the searched term
   const [departmentFilter, setDepartmentFilter] = useState("");
-  const [tagFilter, setTagFilter] = useState("");
+  const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [deadlineFilter, setDeadlineFilter] = useState("");
   const [deadlineBeforeFilter, setDeadlineBeforeFilter] = useState("");
   const [useAISearch, setUseAISearch] = useState(false);
@@ -97,6 +102,7 @@ const SimpleResearchOpportunities: React.FC = () => {
   const [availableDepartments, setAvailableDepartments] = useState<string[]>(
     []
   );
+  const [availableTypes, setAvailableTypes] = useState<string[]>([]);
   const [availableTags, setAvailableTags] = useState<string[]>([]);
 
   const loadFilterOptions = useCallback(async () => {
@@ -126,7 +132,7 @@ const SimpleResearchOpportunities: React.FC = () => {
         )
       ).sort();
 
-      const tags = Array.from(
+      const types = Array.from(
         new Set(
           (result.opportunities || [])
             .map((opp) => opp.category)
@@ -134,7 +140,16 @@ const SimpleResearchOpportunities: React.FC = () => {
         )
       ).sort();
 
+      const tags = Array.from(
+        new Set(
+          (result.opportunities || [])
+            .flatMap((opp) => opp.tags || [])
+            .filter((tag): tag is string => Boolean(tag))
+        )
+      ).sort();
+
       setAvailableDepartments(departments);
+      setAvailableTypes(types);
       setAvailableTags(tags);
     } catch (err) {
       console.error("Error loading filter options:", err);
@@ -227,15 +242,30 @@ const SimpleResearchOpportunities: React.FC = () => {
     }
   }, [currentPage, isSearchMode, allSearchResults, loadOpportunities]);
 
+  // Clear timer on component unmount to prevent memory leaks
+  useEffect(() => {
+    return () => {
+      if (cooldownTimer.current) {
+        clearInterval(cooldownTimer.current);
+      }
+    };
+  }, []);
+
   const handleSearch = async () => {
+    if (isSearching || cooldown > 0) {
+      return;
+    }
+    const wasAISearch = useAISearch; // Capture state at the moment of search
+    const currentSearchTerm = searchInputRef.current?.value || "";
     if (
-      !searchTerm.trim() &&
+      !currentSearchTerm.trim() &&
       !departmentFilter &&
-      !tagFilter &&
+      selectedTypes.length === 0 &&
+      selectedTags.length === 0 &&
       !deadlineFilter &&
       !deadlineBeforeFilter
     ) {
-      // No filters applied, exit search mode and load regular paginated results
+      // No filters applied, exit search mode and load regular paginated result
       setIsSearchMode(false);
       setAllSearchResults([]);
       setCurrentPage(1);
@@ -243,18 +273,30 @@ const SimpleResearchOpportunities: React.FC = () => {
       return;
     }
 
-    setSubmittedSearchTerm(searchTerm); // Set the submitted term only on search
+    setSubmittedSearchTerm(currentSearchTerm); // Set the submitted term only on search
 
     try {
-      setLoading(true);
+      setIsSearching(true);
       setError(null);
+      setLlmSearchResult(null);
 
-      if (useAISearch && searchTerm.trim()) {
+      // Consolidate all search parameters
+      const searchParams: any = {
+        search: currentSearchTerm.trim(),
+        department: departmentFilter,
+        deadline_after: deadlineFilter,
+        deadline_before: deadlineBeforeFilter,
+        category: selectedTypes.join(","),
+        tags: selectedTags.join(","),
+        limit: 5000, // Fetch all matching results up to a high limit
+      };
+
+      if (useAISearch) {
         // Use LLM RAG search - analyzes all opportunities
         setIsGeneratingSummary(true);
 
         const result: LLMSearchResponse = await apiService.llmSearch({
-          query: searchTerm,
+          query: currentSearchTerm,
           limit: 1000, // Analyzes all opportunities, returns top 1000 ranked results
           include_inactive: false,
         });
@@ -267,14 +309,22 @@ const SimpleResearchOpportunities: React.FC = () => {
         // Apply additional filters to AI search results
         if (
           departmentFilter ||
-          tagFilter ||
+          selectedTypes.length > 0 ||
+          selectedTags.length > 0 ||
           deadlineFilter ||
           deadlineBeforeFilter
         ) {
+          // Further client-side filtering
+          // This is applied AFTER getting results from AI search
           filteredResults = filteredResults.filter((opp) => {
             const matchesDepartment =
               !departmentFilter || opp.department === departmentFilter;
-            const matchesTag = !tagFilter || opp.category === tagFilter;
+            const matchesTypes =
+              selectedTypes.length === 0 ||
+              (opp.category && selectedTypes.includes(opp.category));
+            const matchesTags =
+              selectedTags.length === 0 ||
+              (opp.tags && opp.tags.some((tag) => selectedTags.includes(tag)));
             const matchesDeadline =
               (!deadlineFilter ||
                 (opp.deadline &&
@@ -282,7 +332,12 @@ const SimpleResearchOpportunities: React.FC = () => {
               (!deadlineBeforeFilter ||
                 (opp.deadline &&
                   new Date(opp.deadline) <= new Date(deadlineBeforeFilter)));
-            return matchesDepartment && matchesTag && matchesDeadline;
+            return (
+              matchesDepartment &&
+              matchesTypes &&
+              matchesTags &&
+              matchesDeadline
+            );
           });
         }
 
@@ -298,16 +353,6 @@ const SimpleResearchOpportunities: React.FC = () => {
         setOpportunities(paginatedResults);
       } else {
         // Use regular search with filters - searches entire database
-        const searchParams: any = {
-          skip: 0,
-          limit: 10000, // Get all results first
-          include_inactive: false,
-        };
-
-        if (searchTerm.trim()) {
-          searchParams.search = searchTerm;
-        }
-
         const result = await apiService.getOpportunities(searchParams);
 
         // Handle both array and paginated response formats
@@ -320,14 +365,20 @@ const SimpleResearchOpportunities: React.FC = () => {
         // Apply filters
         if (
           departmentFilter ||
-          tagFilter ||
+          selectedTypes.length > 0 ||
+          selectedTags.length > 0 ||
           deadlineFilter ||
           deadlineBeforeFilter
         ) {
-          filteredResults = filteredResults.filter((opp) => {
+          filteredResults = result.opportunities.filter((opp) => {
             const matchesDepartment =
               !departmentFilter || opp.department === departmentFilter;
-            const matchesTag = !tagFilter || opp.category === tagFilter;
+            const matchesTypes =
+              selectedTypes.length === 0 ||
+              (opp.category && selectedTypes.includes(opp.category));
+            const matchesTags =
+              selectedTags.length === 0 ||
+              (opp.tags && opp.tags.some((tag) => selectedTags.includes(tag)));
             const matchesDeadline =
               (!deadlineFilter ||
                 (opp.deadline &&
@@ -335,7 +386,12 @@ const SimpleResearchOpportunities: React.FC = () => {
               (!deadlineBeforeFilter ||
                 (opp.deadline &&
                   new Date(opp.deadline) <= new Date(deadlineBeforeFilter)));
-            return matchesDepartment && matchesTag && matchesDeadline;
+            return (
+              matchesDepartment &&
+              matchesTypes &&
+              matchesTags &&
+              matchesDeadline
+            );
           });
         }
 
@@ -363,22 +419,38 @@ const SimpleResearchOpportunities: React.FC = () => {
       setIsGeneratingSummary(false);
       setLlmSearchResult(null); // Clear LLM result on error
     } finally {
-      setLoading(false);
+      setIsSearching(false);
+      if (wasAISearch) {
+        setCooldown(10);
+        cooldownTimer.current = setInterval(() => {
+          setCooldown((prev) => {
+            if (prev <= 1) {
+              clearInterval(cooldownTimer.current!);
+              return 0;
+            }
+            return prev - 1;
+          });
+        }, 1000);
+      }
     }
   };
 
   const handleClearSearch = () => {
-    setSearchTerm("");
     setSubmittedSearchTerm(""); // Clear submitted term
     setDepartmentFilter("");
-    setTagFilter("");
+    setSelectedTypes([]);
+    setSelectedTags([]);
     setDeadlineFilter("");
     setDeadlineBeforeFilter("");
+    setUseAISearch(false);
     setCurrentPage(1);
     setIsSearchMode(false);
     setAllSearchResults([]);
     setIsGeneratingSummary(false);
     setLlmSearchResult(null); // Clear LLM result on clear
+    if (searchInputRef.current) {
+      searchInputRef.current.value = "";
+    }
     loadOpportunities(true);
   };
 
@@ -397,7 +469,7 @@ const SimpleResearchOpportunities: React.FC = () => {
         <Typography variant="h6" sx={{ mt: 2 }}>
           {isGeneratingSummary
             ? "AI is analyzing opportunities and generating insights..."
-            : useAISearch && searchTerm
+            : useAISearch && searchInputRef.current?.value
               ? "AI is searching..."
               : "Loading opportunities..."}
         </Typography>
@@ -424,7 +496,7 @@ const SimpleResearchOpportunities: React.FC = () => {
       {/* Statistics Cards */}
       {stats ? (
         <Grid container spacing={3} sx={{ mb: 4 }}>
-          <Grid item xs={12} sm={6} md={3}>
+          <Grid item xs={6} sm={6} md={3}>
             <Card>
               <CardContent>
                 <Box
@@ -448,7 +520,7 @@ const SimpleResearchOpportunities: React.FC = () => {
             </Card>
           </Grid>
 
-          <Grid item xs={12} sm={6} md={3}>
+          <Grid item xs={6} sm={6} md={3}>
             <Card>
               <CardContent>
                 <Box
@@ -472,7 +544,7 @@ const SimpleResearchOpportunities: React.FC = () => {
             </Card>
           </Grid>
 
-          <Grid item xs={12} sm={6} md={3}>
+          <Grid item xs={6} sm={6} md={3}>
             <Card>
               <CardContent>
                 <Box
@@ -496,7 +568,7 @@ const SimpleResearchOpportunities: React.FC = () => {
             </Card>
           </Grid>
 
-          <Grid item xs={12} sm={6} md={3}>
+          <Grid item xs={6} sm={6} md={3}>
             <Card>
               <CardContent>
                 <Box
@@ -523,7 +595,7 @@ const SimpleResearchOpportunities: React.FC = () => {
       ) : (
         <Grid container spacing={3} sx={{ mb: 4 }}>
           {[...Array(4)].map((_, index) => (
-            <Grid item xs={12} sm={6} md={3} key={index}>
+            <Grid item xs={6} sm={6} md={3} key={index}>
               <Skeleton variant="rectangular" height={120} />
             </Grid>
           ))}
@@ -531,16 +603,17 @@ const SimpleResearchOpportunities: React.FC = () => {
       )}
 
       {/* Search and Filter Controls */}
-      <Paper elevation={2} sx={{ borderRadius: 4, overflow: "hidden", mb: 4 }}>
-        <Box sx={{ p: 3 }}>
-          {/* Search Toggle */}
-          <Box sx={{ mb: 3, display: "flex", alignItems: "center", gap: 2 }}>
+      <Paper
+        elevation={1}
+        sx={{ p: 3, borderRadius: "16px", mb: 4, overflow: "hidden" }}
+      >
+        <Grid container spacing={2}>
+          <Grid item xs={12}>
             <FormControlLabel
               control={
                 <Switch
                   checked={useAISearch}
                   onChange={(e) => setUseAISearch(e.target.checked)}
-                  color="primary"
                 />
               }
               label={
@@ -550,123 +623,113 @@ const SimpleResearchOpportunities: React.FC = () => {
                 </Box>
               }
             />
-            {/* <Chip
+          </Grid>
+          <Grid item xs={12} md={8}>
+            <TextField
+              fullWidth
+              variant="outlined"
               label={
                 useAISearch
-                  ? "Intelligent semantic search"
-                  : "Basic keyword matching"
+                  ? "Ask AI about research opportunities"
+                  : "Search by keyword"
               }
-              size="small"
-              color={useAISearch ? "secondary" : "default"}
-              variant="outlined"
-            /> */}
-          </Box>
-
-          {/* Search Input */}
-          <Grid container spacing={3}>
-            <Grid item xs={12} md={6}>
-              <TextField
-                fullWidth
-                label={
-                  useAISearch
-                    ? "Ask AI about research opportunities"
-                    : "Search opportunities"
+              placeholder={
+                useAISearch
+                  ? "e.g., 'machine learning projects for undergraduates'"
+                  : "e.g., 'biology', 'computer vision'"
+              }
+              inputRef={searchInputRef}
+              onKeyPress={(e) => {
+                if (e.key === "Enter") {
+                  handleSearch();
                 }
-                placeholder={
-                  useAISearch
-                    ? "e.g., 'machine learning projects for undergraduates'"
-                    : "e.g., 'machine learning', 'biology'"
-                }
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                onKeyPress={(e) => {
-                  if (e.key === "Enter") {
-                    handleSearch();
-                  }
-                }}
-                InputProps={{
-                  startAdornment: useAISearch ? (
-                    <AIIcon sx={{ mr: 1, color: "action.active" }} />
-                  ) : (
-                    <SearchIcon sx={{ mr: 1, color: "action.active" }} />
-                  ),
-                }}
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <Box sx={{ display: "flex", gap: 1 }}>
-                <Button
-                  variant="contained"
-                  onClick={handleSearch}
-                  disabled={loading}
-                  sx={{ minWidth: 100 }}
-                >
-                  Search
-                </Button>
-                <Button
-                  variant="outlined"
-                  onClick={handleClearSearch}
-                  startIcon={<ClearIcon />}
-                >
-                  Clear
-                </Button>
-              </Box>
-            </Grid>
+              }}
+              InputProps={{
+                startAdornment: (
+                  <SearchIcon sx={{ mr: 1, color: "action.active" }} />
+                ),
+              }}
+            />
           </Grid>
-        </Box>
+          <Grid item xs={12} md={2}>
+            <Button
+              fullWidth
+              variant="contained"
+              onClick={handleSearch}
+              disabled={isSearching || cooldown > 0}
+              sx={{ height: "56px" }}
+            >
+              {isSearching ? (
+                <CircularProgress size={24} color="inherit" />
+              ) : cooldown > 0 ? (
+                `Wait (${cooldown}s)`
+              ) : (
+                "Search"
+              )}
+            </Button>
+          </Grid>
+          <Grid item xs={12} md={2}>
+            <Button
+              fullWidth
+              variant="outlined"
+              onClick={handleClearSearch}
+              startIcon={<ClearIcon />}
+              sx={{ height: "56px" }}
+            >
+              Clear
+            </Button>
+          </Grid>
+        </Grid>
         <Accordion
-          disableGutters
-          elevation={0}
-          sx={{
-            "&:before": { display: "none" }, // Removes top border
-            borderTop: "1px solid",
-            borderColor: "divider",
-          }}
+          sx={{ mt: 2, boxShadow: "none", "&:before": { display: "none" } }}
         >
-          <AccordionSummary
-            expandIcon={<ExpandMoreIcon />}
-            aria-controls="search-filter-content"
-            id="search-filter-header"
-          >
+          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
             <Typography variant="h6">Advanced Filters</Typography>
           </AccordionSummary>
-          <AccordionDetails sx={{ p: 3 }}>
-            <Grid container spacing={3}>
-              <Grid item xs={12} md={4}>
-                <FormControl fullWidth>
-                  <InputLabel>Department</InputLabel>
-                  <Select
-                    value={departmentFilter}
-                    label="Department"
-                    onChange={(e) => setDepartmentFilter(e.target.value)}
-                  >
-                    <MenuItem value="">All Departments</MenuItem>
-                    {availableDepartments.map((dept) => (
-                      <MenuItem key={dept} value={dept}>
-                        {dept}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
+          <AccordionDetails>
+            <Grid container spacing={2}>
+              <Grid item xs={12} sm={6} md={4}>
+                <Autocomplete
+                  options={availableDepartments}
+                  getOptionLabel={(option) => option}
+                  value={departmentFilter || null}
+                  onChange={(event, newValue) => {
+                    setDepartmentFilter(newValue || "");
+                  }}
+                  renderInput={(params) => (
+                    <TextField {...params} label="Department" />
+                  )}
+                />
               </Grid>
-              <Grid item xs={12} md={4}>
-                <FormControl fullWidth>
-                  <InputLabel>Tags</InputLabel>
-                  <Select
-                    value={tagFilter}
-                    label="Tags"
-                    onChange={(e) => setTagFilter(e.target.value)}
-                  >
-                    <MenuItem value="">All Tags</MenuItem>
-                    {availableTags.map((tag) => (
-                      <MenuItem key={tag} value={tag}>
-                        {tag}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
+              <Grid item xs={12} sm={6} md={4}>
+                <Autocomplete
+                  multiple
+                  options={availableTypes}
+                  getOptionLabel={(option) => option}
+                  value={selectedTypes}
+                  onChange={(event, newValue) => {
+                    setSelectedTypes(newValue);
+                  }}
+                  renderInput={(params) => (
+                    <TextField {...params} label="Type" />
+                  )}
+                />
               </Grid>
-              <Grid item xs={12} md={4}>
+              <Grid item xs={12} sm={6} md={4}>
+                <Autocomplete
+                  multiple
+                  options={availableTags}
+                  getOptionLabel={(option) => option}
+                  value={selectedTags}
+                  onChange={(event, newValue) => {
+                    setSelectedTags(newValue);
+                  }}
+                  renderInput={(params) => (
+                    <TextField {...params} label="Tags" />
+                  )}
+                />
+              </Grid>
+              <Grid item xs={12} sm={6} md={6}>
                 <TextField
                   fullWidth
                   label="Deadline After"
@@ -678,7 +741,7 @@ const SimpleResearchOpportunities: React.FC = () => {
                   }}
                 />
               </Grid>
-              <Grid item xs={12} md={4}>
+              <Grid item xs={12} sm={6} md={6}>
                 <TextField
                   fullWidth
                   label="Deadline Before"
@@ -696,7 +759,7 @@ const SimpleResearchOpportunities: React.FC = () => {
       </Paper>
 
       {/* AI Search Summary */}
-      {(llmSearchResult || isGeneratingSummary) && useAISearch && (
+      {(isGeneratingSummary || (llmSearchResult && useAISearch)) && (
         <Paper
           elevation={3}
           sx={{
@@ -738,15 +801,8 @@ const SimpleResearchOpportunities: React.FC = () => {
                     <strong>Processing Time:</strong>{" "}
                     {llmSearchResult.processing_time.toFixed(2)}s
                   </Typography>
-                  <Typography
-                    variant="body1"
-                    sx={{ lineHeight: 1.7, color: "text.primary", mb: 2 }}
-                  >
-                    {/* <strong>AI Explanation:</strong>{" "} */}
-                    <MarkdownText>
-                      {llmSearchResult.ai_explanation}
-                    </MarkdownText>
-                  </Typography>
+                  <MarkdownText>{llmSearchResult.ai_explanation}</MarkdownText>
+                  <Box sx={{ mt: 2, mb: 2 }}></Box>
                   <Chip
                     label={`${llmSearchResult.total_found} results found`}
                     color="primary"
@@ -756,36 +812,10 @@ const SimpleResearchOpportunities: React.FC = () => {
               ) : null}
             </Box>
           </Box>
-
-          {!isGeneratingSummary && llmSearchResult && (
-            <Box
-              sx={{
-                mt: 3,
-                pt: 2,
-                borderTop: "1px solid rgba(0,0,0,0.1)",
-                display: "flex",
-                alignItems: "center",
-                gap: 1,
-                flexWrap: "wrap",
-              }}
-            >
-              {/* <Chip
-                icon={<AIIcon />}
-                label="AI-Powered Search"
-                color="primary"
-                variant="outlined"
-                size="small"
-              /> */}
-              <Typography variant="caption" color="text.secondary">
-                Results analyzed and summarized by AI for: "{searchTerm}"
-              </Typography>
-            </Box>
-          )}
         </Paper>
       )}
 
-      {/* Search Results Info */}
-      {isSearchMode && submittedSearchTerm && (
+      {isSearchMode && (
         <Box sx={{ mb: 3 }}>
           <Typography variant="h6" component="h2">
             Search Results for: "
@@ -805,7 +835,7 @@ const SimpleResearchOpportunities: React.FC = () => {
       >
         <Box>
           <Typography variant="h6">
-            {useAISearch && searchTerm && isSearchMode
+            {useAISearch && searchInputRef.current?.value && isSearchMode
               ? `${totalItems} AI-curated opportunities found`
               : `${totalItems} opportunities found`}
           </Typography>
@@ -815,12 +845,30 @@ const SimpleResearchOpportunities: React.FC = () => {
           </Typography>
           {isSearchMode && (
             <Typography variant="body2" color="text.secondary">
-              {submittedSearchTerm && `Search: "${submittedSearchTerm}" `}
-              {departmentFilter && `Department: ${departmentFilter} `}
-              {tagFilter && `Tag: ${tagFilter} `}
-              {deadlineFilter && `Deadline after: ${deadlineFilter}`}
-              {deadlineBeforeFilter &&
-                `Deadline before: ${deadlineBeforeFilter}`}
+              <strong>Filters:</strong>{" "}
+              <Chip
+                label={
+                  [
+                    submittedSearchTerm && `Search: "${submittedSearchTerm}" `,
+                    departmentFilter && `Department: ${departmentFilter} `,
+                    selectedTypes.length > 0 &&
+                      `Type: ${selectedTypes.join(", ")} `,
+                    selectedTags.length > 0 &&
+                      `Tags: ${selectedTags.join(", ")} `,
+                    deadlineFilter && `Deadline after: ${deadlineFilter}`,
+                    deadlineBeforeFilter &&
+                      `Deadline before: ${deadlineBeforeFilter}`,
+                  ]
+                    .filter(Boolean)
+                    .join("• ") || "None"
+                }
+                onDelete={handleClearSearch}
+                sx={{
+                  height: "auto",
+                  p: 1,
+                  "& .MuiChip-label": { whiteSpace: "normal" },
+                }}
+              />
             </Typography>
           )}
         </Box>

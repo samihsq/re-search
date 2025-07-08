@@ -159,6 +159,14 @@ export const OpportunityCard: React.FC<OpportunityCardProps> = ({
           </Typography>
         )}
 
+        {opportunity.tags && opportunity.tags.length > 0 && (
+          <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5, mb: 2 }}>
+            {opportunity.tags.map((tag, index) => (
+              <Chip key={index} label={tag} size="small" />
+            ))}
+          </Box>
+        )}
+
         {opportunity.requirements && (
           <Box sx={{ mb: 2 }}>
             <Typography

@@ -15,10 +15,10 @@ const Header: React.FC = () => {
             sx={{
               display: "flex",
               alignItems: "center",
-              cursor: "pointer",
-              "&:hover": { opacity: 0.8 },
+              // cursor: "pointer",
+              // "&:hover": { opacity: 0.8 },
             }}
-            onClick={() => navigate("/")}
+            // onClick={() => navigate("/")}
           >
             <Typography
               variant="h5"
