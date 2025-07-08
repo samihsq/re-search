@@ -111,6 +111,11 @@ const SimpleResearchOpportunities: React.FC = () => {
     }
   }, []);
 
+  // Fetch filter options once on component mount
+  useEffect(() => {
+    loadFilterOptions();
+  }, [loadFilterOptions]);
+
   const loadOpportunities = useCallback(
     async (resetPage = false) => {
       try {
@@ -144,14 +149,6 @@ const SimpleResearchOpportunities: React.FC = () => {
         if (resetPage) {
           setCurrentPage(1);
         }
-
-        // Load filter options from a larger sample if this is the first load
-        if (
-          currentPage === 1 &&
-          (!availableDepartments.length || !availableTags.length)
-        ) {
-          loadFilterOptions();
-        }
       } catch (err) {
         console.error("Error loading opportunities:", err);
         setError("Failed to load opportunities. Please try again later.");
@@ -160,13 +157,7 @@ const SimpleResearchOpportunities: React.FC = () => {
         setLoading(false);
       }
     },
-    [
-      currentPage,
-      availableDepartments.length,
-      availableTags.length,
-      itemsPerPage,
-      loadFilterOptions,
-    ]
+    [currentPage, itemsPerPage]
   );
 
   useEffect(() => {
