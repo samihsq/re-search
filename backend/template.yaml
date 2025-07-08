@@ -1,0 +1,199 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Stanford Research Opportunities API - Flask + AWS SAM
+
+  A Flask-based API for Stanford research opportunities deployed with AWS SAM
+
+# Global configuration
+Globals:
+  Function:
+    Timeout: 30
+    MemorySize: 1024
+    Runtime: python3.9
+    Environment:
+      Variables:
+        DEBUG: "false"
+        LOG_LEVEL: INFO
+        ENABLE_LLM_PARSING: "true"
+        CHECK_REFERRER: "false"
+
+Parameters:
+  Stage:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - prod
+    Description: Deployment stage
+
+  DatabaseUrl:
+    Type: String
+    Description: PostgreSQL database URL
+    NoEcho: true
+
+  SecretKey:
+    Type: String
+    Description: Flask secret key
+    NoEcho: true
+
+  ApiKey:
+    Type: String
+    Description: API key for frontend authentication
+    NoEcho: true
+    Default: "dev-api-key-change-in-production"
+
+  GeminiApiKey:
+    Type: String
+    Description: Gemini API key for LLM processing
+    NoEcho: true
+    Default: ""
+
+  ScrapingApiKey:
+    Type: String
+    Description: Scraping API key
+    NoEcho: true
+    Default: ""
+
+  AllowedOrigins:
+    Type: String
+    Description: Comma-separated list of allowed CORS origins
+    Default: "https://samihsq.github.io"
+
+Resources:
+  # Main Flask API Lambda Function
+  FlaskApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: lambda_handler.handler
+      Runtime: python3.9
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          STAGE: !Ref Stage
+          DATABASE_URL: !Ref DatabaseUrl
+          SECRET_KEY: !Ref SecretKey
+          API_KEY: !Ref ApiKey
+          GEMINI_API_KEY: !Ref GeminiApiKey
+          SCRAPING_API_KEY: !Ref ScrapingApiKey
+          ALLOWED_ORIGINS: !Ref AllowedOrigins
+      Events:
+        # Root path
+        RootApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /
+            Method: ANY
+        # Catch-all proxy for all other paths
+        ProxyApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /{proxy+}
+            Method: ANY
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - logs:CreateLogGroup
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+              Resource:
+                - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*"
+            - Effect: Allow
+              Action:
+                - rds:DescribeDBInstances
+                - rds:DescribeDBClusters
+              Resource: "*"
+
+  # API Gateway
+  ApiGateway:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: !Ref Stage
+      Description: !Sub "Stanford Research Opportunities API - ${Stage}"
+      Cors:
+        AllowMethods: "'GET,POST,PUT,DELETE,OPTIONS'"
+        AllowHeaders: "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token,X-Amz-User-Agent,X-API-Key'"
+        AllowOrigin: "'*'"
+        AllowCredentials: false
+      # Enable API Gateway logs
+      # AccessLogSetting:
+      #   DestinationArn: !GetAtt ApiGatewayLogGroup.Arn
+      #   Format: >
+      #     {
+      #       "requestId": "$context.requestId",
+      #       "ip": "$context.identity.sourceIp",
+      #       "requestTime": "$context.requestTime",
+      #       "httpMethod": "$context.httpMethod",
+      #       "resourcePath": "$context.resourcePath",
+      #       "status": "$context.status",
+      #       "responseLength": "$context.responseLength"
+      #     }
+      # Enable tracing
+      TracingEnabled: true
+
+  # CloudWatch Log Group for API Gateway
+  ApiGatewayLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/apigateway/${AWS::StackName}"
+      RetentionInDays: 14
+
+  # CloudWatch Log Group for Lambda
+  LambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${FlaskApiFunction}"
+      RetentionInDays: 14
+
+  # Custom Domain (optional - uncomment if you have a domain)
+  # ApiDomainName:
+  #   Type: AWS::ApiGateway::DomainName
+  #   Properties:
+  #     DomainName: api.yourdomain.com
+  #     CertificateArn: !Ref SSLCertificate
+  #     SecurityPolicy: TLS_1_2
+
+  # BasePathMapping:
+  #   Type: AWS::ApiGateway::BasePathMapping
+  #   Properties:
+  #     DomainName: !Ref ApiDomainName
+  #     RestApiId: !Ref ApiGateway
+  #     Stage: !Ref Stage
+
+Outputs:
+  # API Gateway endpoint URL
+  ApiUrl:
+    Description: "API Gateway endpoint URL"
+    Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/"
+    Export:
+      Name: !Sub "${AWS::StackName}-ApiUrl"
+
+  # Lambda Function ARN
+  FlaskApiFunctionArn:
+    Description: "Flask API Lambda Function ARN"
+    Value: !GetAtt FlaskApiFunction.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-FlaskApiFunctionArn"
+
+  # API Gateway ID
+  ApiGatewayId:
+    Description: "API Gateway ID"
+    Value: !Ref ApiGateway
+    Export:
+      Name: !Sub "${AWS::StackName}-ApiGatewayId"
+
+  # Health Check URL
+  HealthCheckUrl:
+    Description: "Health check endpoint"
+    Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/health"
+
+  # Opportunities API URL
+  OpportunitiesApiUrl:
+    Description: "Opportunities API endpoint"
+    Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/api/opportunities"

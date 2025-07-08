@@ -21,7 +21,7 @@ from dataclasses import dataclass, asdict
 from datetime import datetime
 
 # Add the app directory to the path
-sys.path.append('./backend')
+sys.path.append('./scraper')
 from app.config import RESEARCH_URLS
 from app.services.scraping_service import ScrapingService
 

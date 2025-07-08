@@ -17,13 +17,29 @@ import {
   Button,
   Chip,
   Pagination,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails,
+  Skeleton,
+  Card,
+  CardContent,
 } from "@mui/material";
 import {
   Search as SearchIcon,
   AutoAwesome as AIIcon,
   Clear as ClearIcon,
+  ExpandMore as ExpandMoreIcon,
+  TrendingUp as TrendingUpIcon,
+  Analytics as AnalyticsIcon,
+  AccessTime as AccessTimeIcon,
+  School as SchoolIcon,
 } from "@mui/icons-material";
-import { apiService, Opportunity, LLMSearchResponse } from "../services/api";
+import {
+  apiService,
+  Opportunity,
+  LLMSearchResponse,
+  OpportunityStats,
+} from "../services/api";
 import OpportunityCard from "./OpportunityCard";
 
 // Simple markdown renderer for basic formatting
@@ -56,13 +72,16 @@ const SimpleResearchOpportunities: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
+  const [submittedSearchTerm, setSubmittedSearchTerm] = useState(""); // For displaying the searched term
   const [departmentFilter, setDepartmentFilter] = useState("");
   const [tagFilter, setTagFilter] = useState("");
   const [deadlineFilter, setDeadlineFilter] = useState("");
+  const [deadlineBeforeFilter, setDeadlineBeforeFilter] = useState("");
   const [useAISearch, setUseAISearch] = useState(false);
   const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
   const [llmSearchResult, setLlmSearchResult] =
     useState<LLMSearchResponse | null>(null);
+  const [stats, setStats] = useState<OpportunityStats | null>(null);
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
@@ -88,6 +107,17 @@ const SimpleResearchOpportunities: React.FC = () => {
         include_inactive: false,
       });
 
+      // Guard against unexpected API responses
+      if (!result || !result.opportunities) {
+        console.error(
+          "loadFilterOptions: API did not return a valid result.",
+          result
+        );
+        setAvailableDepartments([]);
+        setAvailableTags([]);
+        return;
+      }
+
       const departments = Array.from(
         new Set(
           (result.opportunities || [])
@@ -111,10 +141,20 @@ const SimpleResearchOpportunities: React.FC = () => {
     }
   }, []);
 
+  const loadStats = useCallback(async () => {
+    try {
+      const statsData = await apiService.getStats();
+      setStats(statsData);
+    } catch (err) {
+      console.error("Load stats error:", err);
+    }
+  }, []);
+
   // Fetch filter options once on component mount
   useEffect(() => {
     loadFilterOptions();
-  }, [loadFilterOptions]);
+    loadStats();
+  }, [loadFilterOptions, loadStats]);
 
   const loadOpportunities = useCallback(
     async (resetPage = false) => {
@@ -135,15 +175,29 @@ const SimpleResearchOpportunities: React.FC = () => {
           apiService.getStats(),
         ]);
 
-        // Handle both array and paginated response formats
+        // Guard against unexpected API responses
+        if (!opportunitiesResult) {
+          console.error(
+            "loadOpportunities: getOpportunities did not return a result.",
+            opportunitiesResult
+          );
+        }
+        if (!statsResult) {
+          console.error(
+            "loadOpportunities: getStats did not return a result.",
+            statsResult
+          );
+        }
+
+        // Handle both array and paginated response formats safely
         const opportunities = Array.isArray(opportunitiesResult)
           ? opportunitiesResult
-          : opportunitiesResult.opportunities || [];
+          : opportunitiesResult?.opportunities || [];
 
         setOpportunities(opportunities);
-        setTotalItems(statsResult.total_opportunities);
+        setTotalItems(statsResult?.total_opportunities || 0);
         setTotalPages(
-          Math.ceil(statsResult.total_opportunities / itemsPerPage)
+          Math.ceil((statsResult?.total_opportunities || 0) / itemsPerPage)
         );
 
         if (resetPage) {
@@ -178,7 +232,8 @@ const SimpleResearchOpportunities: React.FC = () => {
       !searchTerm.trim() &&
       !departmentFilter &&
       !tagFilter &&
-      !deadlineFilter
+      !deadlineFilter &&
+      !deadlineBeforeFilter
     ) {
       // No filters applied, exit search mode and load regular paginated results
       setIsSearchMode(false);
@@ -187,6 +242,8 @@ const SimpleResearchOpportunities: React.FC = () => {
       loadOpportunities(true);
       return;
     }
+
+    setSubmittedSearchTerm(searchTerm); // Set the submitted term only on search
 
     try {
       setLoading(true);
@@ -208,15 +265,23 @@ const SimpleResearchOpportunities: React.FC = () => {
         let filteredResults = result.opportunities || [];
 
         // Apply additional filters to AI search results
-        if (departmentFilter || tagFilter || deadlineFilter) {
+        if (
+          departmentFilter ||
+          tagFilter ||
+          deadlineFilter ||
+          deadlineBeforeFilter
+        ) {
           filteredResults = filteredResults.filter((opp) => {
             const matchesDepartment =
               !departmentFilter || opp.department === departmentFilter;
             const matchesTag = !tagFilter || opp.category === tagFilter;
             const matchesDeadline =
-              !deadlineFilter ||
-              (opp.deadline &&
-                new Date(opp.deadline) >= new Date(deadlineFilter));
+              (!deadlineFilter ||
+                (opp.deadline &&
+                  new Date(opp.deadline) >= new Date(deadlineFilter))) &&
+              (!deadlineBeforeFilter ||
+                (opp.deadline &&
+                  new Date(opp.deadline) <= new Date(deadlineBeforeFilter)));
             return matchesDepartment && matchesTag && matchesDeadline;
           });
         }
@@ -253,15 +318,23 @@ const SimpleResearchOpportunities: React.FC = () => {
         let filteredResults = allOpportunities;
 
         // Apply filters
-        if (departmentFilter || tagFilter || deadlineFilter) {
+        if (
+          departmentFilter ||
+          tagFilter ||
+          deadlineFilter ||
+          deadlineBeforeFilter
+        ) {
           filteredResults = filteredResults.filter((opp) => {
             const matchesDepartment =
               !departmentFilter || opp.department === departmentFilter;
             const matchesTag = !tagFilter || opp.category === tagFilter;
             const matchesDeadline =
-              !deadlineFilter ||
-              (opp.deadline &&
-                new Date(opp.deadline) >= new Date(deadlineFilter));
+              (!deadlineFilter ||
+                (opp.deadline &&
+                  new Date(opp.deadline) >= new Date(deadlineFilter))) &&
+              (!deadlineBeforeFilter ||
+                (opp.deadline &&
+                  new Date(opp.deadline) <= new Date(deadlineBeforeFilter)));
             return matchesDepartment && matchesTag && matchesDeadline;
           });
         }
@@ -296,9 +369,11 @@ const SimpleResearchOpportunities: React.FC = () => {
 
   const handleClearSearch = () => {
     setSearchTerm("");
+    setSubmittedSearchTerm(""); // Clear submitted term
     setDepartmentFilter("");
     setTagFilter("");
     setDeadlineFilter("");
+    setDeadlineBeforeFilter("");
     setCurrentPage(1);
     setIsSearchMode(false);
     setAllSearchResults([]);
@@ -342,142 +417,282 @@ const SimpleResearchOpportunities: React.FC = () => {
 
   return (
     <Container maxWidth="lg" sx={{ mt: 4 }}>
-      <Typography variant="h4" component="h1" gutterBottom>
+      {/* <Typography variant="h4" component="h1" gutterBottom>
         Research Opportunities
-      </Typography>
+      </Typography> */}
+
+      {/* Statistics Cards */}
+      {stats ? (
+        <Grid container spacing={3} sx={{ mb: 4 }}>
+          <Grid item xs={12} sm={6} md={3}>
+            <Card>
+              <CardContent>
+                <Box
+                  sx={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                  }}
+                >
+                  <Box>
+                    <Typography color="text.secondary" gutterBottom>
+                      Total Opportunities
+                    </Typography>
+                    <Typography variant="h4">
+                      {stats.total_opportunities}
+                    </Typography>
+                  </Box>
+                  <TrendingUpIcon color="primary" sx={{ fontSize: 40 }} />
+                </Box>
+              </CardContent>
+            </Card>
+          </Grid>
+
+          <Grid item xs={12} sm={6} md={3}>
+            <Card>
+              <CardContent>
+                <Box
+                  sx={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                  }}
+                >
+                  <Box>
+                    <Typography color="text.secondary" gutterBottom>
+                      Active Opportunities
+                    </Typography>
+                    <Typography variant="h4" color="success.main">
+                      {stats.active_opportunities}
+                    </Typography>
+                  </Box>
+                  <AnalyticsIcon color="success" sx={{ fontSize: 40 }} />
+                </Box>
+              </CardContent>
+            </Card>
+          </Grid>
+
+          <Grid item xs={12} sm={6} md={3}>
+            <Card>
+              <CardContent>
+                <Box
+                  sx={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                  }}
+                >
+                  <Box>
+                    <Typography color="text.secondary" gutterBottom>
+                      Recent (7 days)
+                    </Typography>
+                    <Typography variant="h4" color="info.main">
+                      {stats.recent_opportunities}
+                    </Typography>
+                  </Box>
+                  <AccessTimeIcon color="info" sx={{ fontSize: 40 }} />
+                </Box>
+              </CardContent>
+            </Card>
+          </Grid>
+
+          <Grid item xs={12} sm={6} md={3}>
+            <Card>
+              <CardContent>
+                <Box
+                  sx={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                  }}
+                >
+                  <Box>
+                    <Typography color="text.secondary" gutterBottom>
+                      Upcoming Deadlines
+                    </Typography>
+                    <Typography variant="h4" color="warning.main">
+                      {stats.upcoming_deadlines}
+                    </Typography>
+                  </Box>
+                  <SchoolIcon color="warning" sx={{ fontSize: 40 }} />
+                </Box>
+              </CardContent>
+            </Card>
+          </Grid>
+        </Grid>
+      ) : (
+        <Grid container spacing={3} sx={{ mb: 4 }}>
+          {[...Array(4)].map((_, index) => (
+            <Grid item xs={12} sm={6} md={3} key={index}>
+              <Skeleton variant="rectangular" height={120} />
+            </Grid>
+          ))}
+        </Grid>
+      )}
 
       {/* Search and Filter Controls */}
-      <Paper elevation={1} sx={{ p: 3, mb: 4 }}>
-        {/* Search Toggle */}
-        <Box sx={{ mb: 3, display: "flex", alignItems: "center", gap: 2 }}>
-          <FormControlLabel
-            control={
-              <Switch
-                checked={useAISearch}
-                onChange={(e) => setUseAISearch(e.target.checked)}
-                color="primary"
-              />
-            }
-            label={
-              <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                {useAISearch ? <AIIcon /> : <SearchIcon />}
-                {useAISearch ? "AI RAG Search" : "Simple Text Search"}
-              </Box>
-            }
-          />
-          <Chip
-            label={
-              useAISearch
-                ? "Intelligent semantic search"
-                : "Basic keyword matching"
-            }
-            size="small"
-            color={useAISearch ? "secondary" : "default"}
-            variant="outlined"
-          />
-        </Box>
-
-        {/* Search Input */}
-        <Grid container spacing={3}>
-          <Grid item xs={12} md={6}>
-            <TextField
-              fullWidth
+      <Paper elevation={2} sx={{ borderRadius: 4, overflow: "hidden", mb: 4 }}>
+        <Box sx={{ p: 3 }}>
+          {/* Search Toggle */}
+          <Box sx={{ mb: 3, display: "flex", alignItems: "center", gap: 2 }}>
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={useAISearch}
+                  onChange={(e) => setUseAISearch(e.target.checked)}
+                  color="primary"
+                />
+              }
+              label={
+                <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                  {useAISearch ? <AIIcon /> : <SearchIcon />}
+                  {useAISearch ? "AI-assisted Search" : "Simple Text Search"}
+                </Box>
+              }
+            />
+            {/* <Chip
               label={
                 useAISearch
-                  ? "Ask AI about research opportunities"
-                  : "Search opportunities"
+                  ? "Intelligent semantic search"
+                  : "Basic keyword matching"
               }
-              placeholder={
-                useAISearch
-                  ? "e.g., 'machine learning projects for undergraduates'"
-                  : "e.g., 'machine learning', 'biology'"
-              }
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              onKeyPress={(e) => {
-                if (e.key === "Enter") {
-                  handleSearch();
-                }
-              }}
-              InputProps={{
-                startAdornment: useAISearch ? (
-                  <AIIcon sx={{ mr: 1, color: "action.active" }} />
-                ) : (
-                  <SearchIcon sx={{ mr: 1, color: "action.active" }} />
-                ),
-              }}
-            />
-          </Grid>
-          <Grid item xs={12} md={6}>
-            <Box sx={{ display: "flex", gap: 1 }}>
-              <Button
-                variant="contained"
-                onClick={handleSearch}
-                disabled={loading}
-                sx={{ minWidth: 100 }}
-              >
-                Search
-              </Button>
-              <Button
-                variant="outlined"
-                onClick={handleClearSearch}
-                startIcon={<ClearIcon />}
-              >
-                Clear
-              </Button>
-            </Box>
-          </Grid>
-        </Grid>
+              size="small"
+              color={useAISearch ? "secondary" : "default"}
+              variant="outlined"
+            /> */}
+          </Box>
 
-        {/* Filters */}
-        <Grid container spacing={3} sx={{ mt: 1 }}>
-          <Grid item xs={12} md={4}>
-            <FormControl fullWidth>
-              <InputLabel>Department</InputLabel>
-              <Select
-                value={departmentFilter}
-                label="Department"
-                onChange={(e) => setDepartmentFilter(e.target.value)}
-              >
-                <MenuItem value="">All Departments</MenuItem>
-                {availableDepartments.map((dept) => (
-                  <MenuItem key={dept} value={dept}>
-                    {dept}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
+          {/* Search Input */}
+          <Grid container spacing={3}>
+            <Grid item xs={12} md={6}>
+              <TextField
+                fullWidth
+                label={
+                  useAISearch
+                    ? "Ask AI about research opportunities"
+                    : "Search opportunities"
+                }
+                placeholder={
+                  useAISearch
+                    ? "e.g., 'machine learning projects for undergraduates'"
+                    : "e.g., 'machine learning', 'biology'"
+                }
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                onKeyPress={(e) => {
+                  if (e.key === "Enter") {
+                    handleSearch();
+                  }
+                }}
+                InputProps={{
+                  startAdornment: useAISearch ? (
+                    <AIIcon sx={{ mr: 1, color: "action.active" }} />
+                  ) : (
+                    <SearchIcon sx={{ mr: 1, color: "action.active" }} />
+                  ),
+                }}
+              />
+            </Grid>
+            <Grid item xs={12} md={6}>
+              <Box sx={{ display: "flex", gap: 1 }}>
+                <Button
+                  variant="contained"
+                  onClick={handleSearch}
+                  disabled={loading}
+                  sx={{ minWidth: 100 }}
+                >
+                  Search
+                </Button>
+                <Button
+                  variant="outlined"
+                  onClick={handleClearSearch}
+                  startIcon={<ClearIcon />}
+                >
+                  Clear
+                </Button>
+              </Box>
+            </Grid>
           </Grid>
-          <Grid item xs={12} md={4}>
-            <FormControl fullWidth>
-              <InputLabel>Tags</InputLabel>
-              <Select
-                value={tagFilter}
-                label="Tags"
-                onChange={(e) => setTagFilter(e.target.value)}
-              >
-                <MenuItem value="">All Tags</MenuItem>
-                {availableTags.map((tag) => (
-                  <MenuItem key={tag} value={tag}>
-                    {tag}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-          </Grid>
-          <Grid item xs={12} md={4}>
-            <TextField
-              fullWidth
-              label="Deadline After"
-              type="date"
-              value={deadlineFilter}
-              onChange={(e) => setDeadlineFilter(e.target.value)}
-              InputLabelProps={{
-                shrink: true,
-              }}
-            />
-          </Grid>
-        </Grid>
+        </Box>
+        <Accordion
+          disableGutters
+          elevation={0}
+          sx={{
+            "&:before": { display: "none" }, // Removes top border
+            borderTop: "1px solid",
+            borderColor: "divider",
+          }}
+        >
+          <AccordionSummary
+            expandIcon={<ExpandMoreIcon />}
+            aria-controls="search-filter-content"
+            id="search-filter-header"
+          >
+            <Typography variant="h6">Advanced Filters</Typography>
+          </AccordionSummary>
+          <AccordionDetails sx={{ p: 3 }}>
+            <Grid container spacing={3}>
+              <Grid item xs={12} md={4}>
+                <FormControl fullWidth>
+                  <InputLabel>Department</InputLabel>
+                  <Select
+                    value={departmentFilter}
+                    label="Department"
+                    onChange={(e) => setDepartmentFilter(e.target.value)}
+                  >
+                    <MenuItem value="">All Departments</MenuItem>
+                    {availableDepartments.map((dept) => (
+                      <MenuItem key={dept} value={dept}>
+                        {dept}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Grid>
+              <Grid item xs={12} md={4}>
+                <FormControl fullWidth>
+                  <InputLabel>Tags</InputLabel>
+                  <Select
+                    value={tagFilter}
+                    label="Tags"
+                    onChange={(e) => setTagFilter(e.target.value)}
+                  >
+                    <MenuItem value="">All Tags</MenuItem>
+                    {availableTags.map((tag) => (
+                      <MenuItem key={tag} value={tag}>
+                        {tag}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Grid>
+              <Grid item xs={12} md={4}>
+                <TextField
+                  fullWidth
+                  label="Deadline After"
+                  type="date"
+                  value={deadlineFilter}
+                  onChange={(e) => setDeadlineFilter(e.target.value)}
+                  InputLabelProps={{
+                    shrink: true,
+                  }}
+                />
+              </Grid>
+              <Grid item xs={12} md={4}>
+                <TextField
+                  fullWidth
+                  label="Deadline Before"
+                  type="date"
+                  value={deadlineBeforeFilter}
+                  onChange={(e) => setDeadlineBeforeFilter(e.target.value)}
+                  InputLabelProps={{
+                    shrink: true,
+                  }}
+                />
+              </Grid>
+            </Grid>
+          </AccordionDetails>
+        </Accordion>
       </Paper>
 
       {/* AI Search Summary */}
@@ -527,7 +742,7 @@ const SimpleResearchOpportunities: React.FC = () => {
                     variant="body1"
                     sx={{ lineHeight: 1.7, color: "text.primary", mb: 2 }}
                   >
-                    <strong>AI Explanation:</strong>{" "}
+                    {/* <strong>AI Explanation:</strong>{" "} */}
                     <MarkdownText>
                       {llmSearchResult.ai_explanation}
                     </MarkdownText>
@@ -554,19 +769,29 @@ const SimpleResearchOpportunities: React.FC = () => {
                 flexWrap: "wrap",
               }}
             >
-              <Chip
+              {/* <Chip
                 icon={<AIIcon />}
                 label="AI-Powered Search"
                 color="primary"
                 variant="outlined"
                 size="small"
-              />
+              /> */}
               <Typography variant="caption" color="text.secondary">
                 Results analyzed and summarized by AI for: "{searchTerm}"
               </Typography>
             </Box>
           )}
         </Paper>
+      )}
+
+      {/* Search Results Info */}
+      {isSearchMode && submittedSearchTerm && (
+        <Box sx={{ mb: 3 }}>
+          <Typography variant="h6" component="h2">
+            Search Results for: "
+            <span style={{ fontStyle: "italic" }}>{submittedSearchTerm}</span>"
+          </Typography>
+        </Box>
       )}
 
       {/* Results Summary */}
@@ -588,12 +813,14 @@ const SimpleResearchOpportunities: React.FC = () => {
             Showing page {currentPage} of {totalPages} ({opportunities.length}{" "}
             items on this page)
           </Typography>
-          {(searchTerm || departmentFilter || tagFilter || deadlineFilter) && (
+          {isSearchMode && (
             <Typography variant="body2" color="text.secondary">
-              {searchTerm && `Search: "${searchTerm}" `}
+              {submittedSearchTerm && `Search: "${submittedSearchTerm}" `}
               {departmentFilter && `Department: ${departmentFilter} `}
               {tagFilter && `Tag: ${tagFilter} `}
               {deadlineFilter && `Deadline after: ${deadlineFilter}`}
+              {deadlineBeforeFilter &&
+                `Deadline before: ${deadlineBeforeFilter}`}
             </Typography>
           )}
         </Box>

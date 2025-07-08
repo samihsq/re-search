@@ -98,12 +98,12 @@ const ResearchOpportunities: React.FC = () => {
 
   return (
     <Container maxWidth="lg" sx={{ mt: 4 }}>
-      <Typography variant="h4" component="h1" gutterBottom>
+      {/* <Typography variant="h4" component="h1" gutterBottom>
         Research Opportunities
-      </Typography>
-      <Typography variant="body1" color="text.secondary" paragraph>
+      </Typography> */}
+      {/* <Typography variant="body1" color="text.secondary" paragraph>
         Discover exciting research opportunities across Stanford University.
-      </Typography>
+      </Typography> */}
 
       {/* Search and Filter Controls */}
       <Paper elevation={1} sx={{ p: 3, mb: 4 }}>
@@ -177,10 +177,10 @@ const ResearchOpportunities: React.FC = () => {
           <Typography variant="h6" gutterBottom>
             No opportunities found
           </Typography>
-          <Typography color="text.secondary">
+          {/* <Typography color="text.secondary">
             Try adjusting your search criteria or check back later for new
             opportunities.
-          </Typography>
+          </Typography> */}
         </Paper>
       ) : (
         <Grid container spacing={3}>

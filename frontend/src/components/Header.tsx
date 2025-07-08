@@ -19,7 +19,7 @@ const Header: React.FC = () => {
 
   const navItems = [
     { label: "Opportunities", path: "/home", icon: <SearchIcon /> },
-    { label: "Enhanced", path: "/enhanced", icon: <AnalyticsIcon /> },
+    // { label: "Enhanced", path: "/enhanced", icon: <AnalyticsIcon /> },
   ];
 
   return (

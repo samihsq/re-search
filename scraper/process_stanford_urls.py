@@ -39,12 +39,12 @@ except ImportError:  # pragma: no cover
 # The validator lives one directory above this script
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
-sys.path.append(str(PROJECT_ROOT))  # Ensure backend package is importable
+sys.path.append(str(SCRIPT_DIR))  # Ensure scraper package is importable
 
 from url_validator import URLValidator  # noqa: E402 – after sys.path tweak
 from app.config import RESEARCH_URLS  # Access default list
 
-CONFIG_PATH = PROJECT_ROOT / "backend" / "app" / "config.py"
+CONFIG_PATH = PROJECT_ROOT / "scraper" / "app" / "config.py"
 
 
 def load_urls(file_path: Path) -> List[str]:

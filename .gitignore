@@ -27,3 +27,5 @@ DEPLOYMENT_GUIDE.md
 /cdk.out
 .env.production
 GITHUB_ACTIONS_SETUP.md
+/stanford-research-api-dev-FlaskApiFunction-ckPp1WJYydpj
+/backend/.aws-sam

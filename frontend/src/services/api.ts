@@ -23,7 +23,7 @@ const API_KEY = process.env.REACT_APP_API_KEY || 'dev-api-key-change-in-producti
 // Create axios instance with enhanced timeout for LLM operations
 const api = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 30000, // 30 seconds for LLM operations
+  timeout: 120000, // 125 seconds, to exceed the backend's 120s Gemini timeout
 });
 
 // Add request interceptor for debugging and authentication
