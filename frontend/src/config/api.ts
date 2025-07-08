@@ -2,7 +2,8 @@
 const getApiBaseUrl = () => {
   // In production (GitHub Pages), use the deployed AWS API
   if (process.env.NODE_ENV === 'production') {
-    return 'https://nzl4dbhfje.execute-api.us-west-2.amazonaws.com';  // Your deployed API
+    // Updated production API URL after redeployment
+    return 'https://umi2dnhsp2.execute-api.us-west-2.amazonaws.com/dev';  // New deployed API
   }
   // In development, use localhost
   return process.env.REACT_APP_API_URL || 'http://localhost:8000';

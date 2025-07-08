@@ -47,6 +47,7 @@ jobs:
         env:
           CI: false # Treat warnings as warnings, not errors
           GENERATE_SOURCEMAP: false # Reduce build size
+          REACT_APP_API_KEY: ${{ secrets.REACT_APP_API_KEY }}
 
       - name: Setup Pages
         uses: actions/configure-pages@v4

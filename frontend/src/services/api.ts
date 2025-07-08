@@ -2,13 +2,14 @@ import axios from 'axios';
 
 // Dynamic API base URL that works both locally and in production
 const getApiBaseUrl = () => {
-  // In production (GitHub Pages), use the deployed AWS API
+  // In production (GitHub Pages), use the working AWS API endpoint
   if (process.env.NODE_ENV === 'production') {
-    return 'https://nzl4dbhfje.execute-api.us-west-2.amazonaws.com';  // Remove /api from base URL
+    // Updated URL to new backend deployment with /dev stage
+    return 'https://umi2dnhsp2.execute-api.us-west-2.amazonaws.com/dev';  // New backend endpoint
   }
   // If we're in development and on localhost, use localhost
   if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-    return 'http://localhost:8000';  // Remove /api from base URL
+    return 'http://localhost:8000';
   }
   // Otherwise, use the same host as the frontend
   return '';  // Use relative paths for same-host deployment
@@ -16,16 +17,23 @@ const getApiBaseUrl = () => {
 
 const API_BASE_URL = getApiBaseUrl();
 
+// API Key for authentication (should be environment variable in production)
+const API_KEY = process.env.REACT_APP_API_KEY || 'dev-api-key-change-in-production';
+
 // Create axios instance with enhanced timeout for LLM operations
 const api = axios.create({
   baseURL: API_BASE_URL,
   timeout: 30000, // 30 seconds for LLM operations
 });
 
-// Add request interceptor for debugging
+// Add request interceptor for debugging and authentication
 api.interceptors.request.use(
   (config) => {
+    // Add API key header for authentication
+    config.headers['X-API-Key'] = API_KEY;
+    
     console.log(`API Request: ${config.method?.toUpperCase()} ${config.baseURL}${config.url}`);
+    console.log('Headers:', config.headers);
     return config;
   },
   (error) => {
@@ -40,7 +48,11 @@ api.interceptors.response.use(
     return response;
   },
   (error) => {
-    if (error.code === 'ECONNREFUSED' || error.code === 'ERR_NETWORK') {
+    if (error.response?.status === 401) {
+      console.error('Authentication failed: Invalid API key');
+    } else if (error.response?.status === 403) {
+      console.error('Access forbidden: Origin not allowed');
+    } else if (error.code === 'ECONNREFUSED' || error.code === 'ERR_NETWORK') {
       console.error(`Backend API connection failed. Trying to connect to: ${API_BASE_URL}`);
       console.error('Make sure the backend server is running with: python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000');
     }
