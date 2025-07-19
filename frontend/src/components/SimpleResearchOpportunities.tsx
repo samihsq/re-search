@@ -71,6 +71,27 @@ const MarkdownText: React.FC<{ children: string }> = ({ children }) => {
 const SimpleResearchOpportunities: React.FC = () => {
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Helper function to safely parse dates for comparison
+  const isValidDate = (dateString?: string): boolean => {
+    if (!dateString) return false;
+    const date = new Date(dateString);
+    return !isNaN(date.getTime());
+  };
+
+  const compareDates = (
+    dateString1: string | undefined,
+    dateString2: string | undefined,
+    operator: ">=" | "<="
+  ): boolean => {
+    if (!dateString1 || !dateString2) return false;
+    if (!isValidDate(dateString1) || !isValidDate(dateString2)) return false;
+
+    const date1 = new Date(dateString1);
+    const date2 = new Date(dateString2);
+
+    return operator === ">=" ? date1 >= date2 : date1 <= date2;
+  };
   const [isSearching, setIsSearching] = useState(false);
   const [cooldown, setCooldown] = useState(0);
   const cooldownTimer = useRef<NodeJS.Timeout>();
@@ -327,11 +348,9 @@ const SimpleResearchOpportunities: React.FC = () => {
               (opp.tags && opp.tags.some((tag) => selectedTags.includes(tag)));
             const matchesDeadline =
               (!deadlineFilter ||
-                (opp.deadline &&
-                  new Date(opp.deadline) >= new Date(deadlineFilter))) &&
+                compareDates(opp.deadline, deadlineFilter, ">=")) &&
               (!deadlineBeforeFilter ||
-                (opp.deadline &&
-                  new Date(opp.deadline) <= new Date(deadlineBeforeFilter)));
+                compareDates(opp.deadline, deadlineBeforeFilter, "<="));
             return (
               matchesDepartment &&
               matchesTypes &&
@@ -381,11 +400,9 @@ const SimpleResearchOpportunities: React.FC = () => {
               (opp.tags && opp.tags.some((tag) => selectedTags.includes(tag)));
             const matchesDeadline =
               (!deadlineFilter ||
-                (opp.deadline &&
-                  new Date(opp.deadline) >= new Date(deadlineFilter))) &&
+                compareDates(opp.deadline, deadlineFilter, ">=")) &&
               (!deadlineBeforeFilter ||
-                (opp.deadline &&
-                  new Date(opp.deadline) <= new Date(deadlineBeforeFilter)));
+                compareDates(opp.deadline, deadlineBeforeFilter, "<="));
             return (
               matchesDepartment &&
               matchesTypes &&

@@ -5,6 +5,7 @@ Converted from FastAPI SQLAlchemy models
 
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import func, ARRAY, String, Text, Float, JSON, TIMESTAMP, Boolean, Integer, Date
+from sqlalchemy.dialects.postgresql import TSVECTOR
 from datetime import datetime
 from typing import List, Optional
 
@@ -29,12 +30,24 @@ class Opportunity(db.Model):
     contact_email = db.Column(db.String(255))
     tags = db.Column(ARRAY(String))  # Store as string array
     
+    # Full-text search vector columns
+    search_vector = db.Column(TSVECTOR)
+    
     # LLM Validation and Enhancement Fields
     llm_parsed = db.Column(db.Boolean, default=False)
     parsing_confidence = db.Column(db.Float)
     llm_error = db.Column(db.Text)
     processed_at = db.Column(TIMESTAMP)
     scraper_used = db.Column(db.String(100))
+    
+    # Opportunity Tracking Fields (NEW)
+    content_hash = db.Column(db.String(64), index=True)  # SHA-256 hash of key content for similarity detection
+    first_seen_at = db.Column(TIMESTAMP, default=func.current_timestamp())  # When first discovered
+    last_seen_at = db.Column(TIMESTAMP, default=func.current_timestamp())  # When last found in a scrape
+    last_updated_at = db.Column(TIMESTAMP, default=func.current_timestamp())  # When content last changed
+    status = db.Column(db.String(20), default='active', index=True)  # 'new', 'active', 'missing', 'removed'
+    consecutive_missing_count = db.Column(db.Integer, default=0)  # How many scrapes it's been missing
+    similarity_group_id = db.Column(db.String(64))  # Group ID for similar opportunities
     
     # Metadata
     scraped_at = db.Column(TIMESTAMP, default=func.current_timestamp())
@@ -64,7 +77,15 @@ class Opportunity(db.Model):
             'processed_at': self.processed_at.isoformat() if self.processed_at else None,
             'scraper_used': self.scraper_used,
             'scraped_at': self.scraped_at.isoformat() if self.scraped_at else None,
-            'is_active': self.is_active
+            'is_active': self.is_active,
+            # NEW tracking fields
+            'content_hash': self.content_hash,
+            'first_seen_at': self.first_seen_at.isoformat() if self.first_seen_at else None,
+            'last_seen_at': self.last_seen_at.isoformat() if self.last_seen_at else None,
+            'last_updated_at': self.last_updated_at.isoformat() if self.last_updated_at else None,
+            'status': self.status,
+            'consecutive_missing_count': self.consecutive_missing_count,
+            'similarity_group_id': self.similarity_group_id
         }
     
     def __repr__(self):

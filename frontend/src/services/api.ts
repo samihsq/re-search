@@ -89,6 +89,14 @@ export interface Opportunity {
   // Computed fields for backward compatibility
   category?: string;
   url?: string;
+  // NEW tracking fields
+  content_hash?: string;
+  first_seen_at?: string;
+  last_seen_at?: string;
+  last_updated_at?: string;
+  status?: string;
+  consecutive_missing_count?: number;
+  similarity_group_id?: string;
 }
 
 export interface PaginatedOpportunities {
@@ -307,6 +315,27 @@ class ApiService {
     const response = await api.post('/api/opportunities/admin/reset-database', {
       confirmation
     });
+    return response.data;
+  }
+
+  // NEW: Opportunity tracking methods
+  async getOpportunityStats(): Promise<{
+    total_active: number;
+    recent_new_opportunities: number;
+    funded_opportunities: number;
+    status_breakdown: { [key: string]: number };
+    top_departments: Array<{ department: string; count: number }>;
+  }> {
+    const response = await api.get('/api/opportunities/stats');
+    return response.data;
+  }
+
+  async getRecentNewOpportunities(days: number = 7): Promise<{
+    opportunities: Opportunity[];
+    total: number;
+    days: number;
+  }> {
+    const response = await api.get(`/api/opportunities/recent-new?days=${days}`);
     return response.data;
   }
 }

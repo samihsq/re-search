@@ -4,6 +4,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
+from sqlalchemy.dialects.postgresql import TSVECTOR
 from datetime import datetime
 from typing import List, Optional
 
@@ -28,6 +29,9 @@ class Opportunity(Base):
     contact_email = Column(String(255))
     tags = Column(ARRAY(String))  # Store as string array for easy querying
     
+    # Full-text search vector columns
+    search_vector = Column(TSVECTOR)
+    
     # LLM Validation and Enhancement Fields
     # LLM HTML Parsing Fields  
     llm_parsed = Column(Boolean, default=False)  # Whether this was extracted by LLM
@@ -35,6 +39,15 @@ class Opportunity(Base):
     llm_error = Column(Text)  # Any errors during LLM processing
     processed_at = Column(TIMESTAMP)  # When LLM processing was completed
     scraper_used = Column(String(100))  # Which scraper class was used
+    
+    # Opportunity Tracking Fields (NEW)
+    content_hash = Column(String(64), index=True)  # SHA-256 hash of key content for similarity detection
+    first_seen_at = Column(TIMESTAMP, default=func.current_timestamp())  # When first discovered
+    last_seen_at = Column(TIMESTAMP, default=func.current_timestamp())  # When last found in a scrape
+    last_updated_at = Column(TIMESTAMP, default=func.current_timestamp())  # When content last changed
+    status = Column(String(20), default='active', index=True)  # 'new', 'active', 'missing', 'removed'
+    consecutive_missing_count = Column(Integer, default=0)  # How many scrapes it's been missing
+    similarity_group_id = Column(String(64))  # Group ID for similar opportunities
     
     # Metadata
     scraped_at = Column(TIMESTAMP, default=func.current_timestamp())

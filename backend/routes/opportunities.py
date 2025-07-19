@@ -1,624 +1,281 @@
 """
-Opportunities routes for Flask application
-Converted from FastAPI opportunities router
+Opportunities API routes
 """
 
-from flask import Blueprint, request, jsonify, current_app
-from sqlalchemy import and_, or_, func, desc, asc, text, sql
-from typing import List, Optional, Dict, Any
-from datetime import date, datetime, timedelta
-import os
-import json
-import re
+from flask import Blueprint, request, jsonify
+from sqlalchemy import and_, or_, func, desc, text
+from sqlalchemy.orm import Query
+from datetime import datetime, timedelta
+from typing import List, Dict, Any
 
-# Optional Gemini support (same style as llm_validation_service)
-try:
-    from google import genai  # type: ignore
-    from google.genai import types  # type: ignore
-    GEMINI_AVAILABLE = True
-except ImportError:  # pragma: no cover
-    GEMINI_AVAILABLE = False
+from ..models import db, Opportunity
 
-from models import db, Opportunity, ScrapingLog
-from config import get_settings
-from auth import require_auth, require_auth_optional, get_auth_info
-
-# Disable strict_slashes so routes work both with and without trailing slash (avoids 308 redirects)
 opportunities_bp = Blueprint('opportunities', __name__)
 
-def get_query_param(param_name: str, default_value=None, param_type=str):
-    """Helper function to get query parameters with type conversion."""
-    value = request.args.get(param_name, default_value)
-    if value is None:
-        return default_value
-    
-    if param_type == int:
-        try:
-            return int(value)
-        except ValueError:
-            return default_value
-    elif param_type == bool:
-        # Handle case where value is already a boolean (from default_value)
-        if isinstance(value, bool):
-            return value
-        # Handle string values from query parameters
-        return value.lower() in ('true', '1', 'yes', 'on')
-    elif param_type == float:
-        try:
-            return float(value)
-        except ValueError:
-            return default_value
-    
-    return value
 
-@opportunities_bp.route('/')
-@require_auth
+@opportunities_bp.route('/health', methods=['GET'])
+def health_check():
+    """Health check endpoint"""
+    return jsonify({"status": "healthy", "service": "opportunities"})
+
+
+@opportunities_bp.route('/', methods=['GET'])
 def get_opportunities():
-    """Get opportunities with filtering and pagination."""
-    
-    # Parse query parameters
-    skip = get_query_param('skip', 0, int)
-    limit = get_query_param('limit', 20, int)
-    department = get_query_param('department')
-    opportunity_type = get_query_param('opportunity_type')
-    is_active = get_query_param('is_active', True, bool)
-    deadline_from = get_query_param('deadline_from')
-    deadline_to = get_query_param('deadline_to')
-    has_funding = get_query_param('has_funding', None, bool)
-    search = get_query_param('search')
-    sort_by = get_query_param('sort_by', 'scraped_at')
-    sort_order = get_query_param('sort_order', 'desc')
-    tags = get_query_param('tags')  # Comma-separated
-    
-    # Validate parameters
-    if skip < 0:
-        skip = 0
-    if limit < 1 or limit > 10000:
-        limit = 20
-    if sort_order not in ['asc', 'desc']:
-        sort_order = 'desc'
-    
+    """Get paginated research opportunities with full-text search support."""
     try:
-        query = db.session.query(Opportunity)
+        # Parse query parameters
+        page = int(request.args.get('page', 1))
+        limit = int(request.args.get('limit', 20))
+        search_query = request.args.get('search', '').strip()
+        category = request.args.get('category', '').strip()
+        department = request.args.get('department', '').strip()
+        has_funding = request.args.get('has_funding', '').lower() == 'true'
         
-        # Apply filters
-        if is_active is not None:
-            query = query.filter(Opportunity.is_active == is_active)
+        # Start with base query
+        query = db.session.query(Opportunity).filter(Opportunity.is_active == True)
         
+        # Apply search filter using full-text search
+        if search_query:
+            # Convert search query to tsquery format
+            # Handle simple queries and phrases
+            if '"' in search_query:
+                # Handle phrase search
+                tsquery = search_query.replace('"', "'")
+            else:
+                # Handle individual terms with OR logic
+                terms = search_query.split()
+                tsquery = ' | '.join(terms)
+            
+            try:
+                # Use full-text search with ranking
+                query = query.filter(
+                    Opportunity.search_vector.op('@@')(func.to_tsquery('english', tsquery))
+                ).order_by(
+                    desc(func.ts_rank(Opportunity.search_vector, func.to_tsquery('english', tsquery)))
+                )
+            except Exception as e:
+                # Fallback to basic text search if full-text search fails
+                search_terms = f"%{search_query}%"
+                query = query.filter(
+                    or_(
+                        Opportunity.title.ilike(search_terms),
+                        Opportunity.description.ilike(search_terms),
+                        Opportunity.department.ilike(search_terms)
+                    )
+                )
+        else:
+            # Default ordering by scraped_at (newest first)
+            query = query.order_by(desc(Opportunity.scraped_at))
+        
+        # Apply category filter
+        if category:
+            query = query.filter(Opportunity.opportunity_type.ilike(f"%{category}%"))
+        
+        # Apply department filter
         if department:
             query = query.filter(Opportunity.department.ilike(f"%{department}%"))
         
-        if opportunity_type:
-            query = query.filter(Opportunity.opportunity_type == opportunity_type)
+        # Apply funding filter
+        if has_funding:
+            query = query.filter(and_(
+                Opportunity.funding_amount.isnot(None),
+                Opportunity.funding_amount != ''
+            ))
         
-        if tags:
-            tag_list = [tag.strip() for tag in tags.split(',') if tag.strip()]
-            if tag_list:
-                # Use array overlap operator '&&' for PostgreSQL
-                query = query.filter(Opportunity.tags.op('&&')(tag_list))
-        
-        if has_funding is not None:
-            if has_funding:
-                query = query.filter(Opportunity.funding_amount.isnot(None))
-            else:
-                query = query.filter(Opportunity.funding_amount.is_(None))
-        
-        if search:
-            search_filter = or_(
-                Opportunity.title.ilike(f"%{search}%"),
-                Opportunity.description.ilike(f"%{search}%")
-            )
-            query = query.filter(search_filter)
-        
-        # Apply sorting
-        if hasattr(Opportunity, sort_by):
-            sort_column = getattr(Opportunity, sort_by)
-            if sort_order == "desc":
-                query = query.order_by(desc(sort_column))
-            else:
-                query = query.order_by(asc(sort_column))
+        # Get total count before pagination
+        total_count = query.count()
         
         # Apply pagination
-        opportunities = query.offset(skip).limit(limit).all()
+        offset = (page - 1) * limit
+        opportunities = query.offset(offset).limit(limit).all()
         
-        # Convert to dictionaries
-        result = [opp.to_dict() for opp in opportunities]
-        
-        return jsonify(result)
-        
-    except Exception as e:
-        current_app.logger.error(f"Error getting opportunities: {e}")
-        return jsonify({"error": "Failed to retrieve opportunities", "message": str(e)}), 500
-
-@opportunities_bp.route('/count')
-@require_auth
-def get_opportunities_count():
-    """Return total count of active opportunities."""
-    try:
-        total = db.session.query(Opportunity).filter(Opportunity.is_active == True).count()
-        return jsonify({"total": total})
-    except Exception as e:
-        current_app.logger.error(f"Error getting opportunities count: {e}")
-        return jsonify({"error": "Failed to get count", "message": str(e)}), 500
-
-@opportunities_bp.route('/<int:opportunity_id>')
-@require_auth
-def get_opportunity(opportunity_id):
-    """Get a single opportunity by ID."""
-    try:
-        opportunity = db.session.query(Opportunity).filter(Opportunity.id == opportunity_id).first()
-        
-        if not opportunity:
-            return jsonify({"error": "Opportunity not found"}), 404
-        
-        return jsonify(opportunity.to_dict())
-        
-    except Exception as e:
-        current_app.logger.error(f"Error getting opportunity {opportunity_id}: {e}")
-        return jsonify({"error": "Failed to retrieve opportunity", "message": str(e)}), 500
-
-@opportunities_bp.route('/', methods=['POST'])
-@require_auth
-def create_opportunity():
-    """Create a new opportunity."""
-    try:
-        data = request.get_json()
-        
-        if not data:
-            return jsonify({"error": "No data provided"}), 400
-        
-        # Validate required fields
-        if not data.get('title'):
-            return jsonify({"error": "Title is required"}), 400
-        if not data.get('source_url'):
-            return jsonify({"error": "Source URL is required"}), 400
-        
-        # Create new opportunity
-        opportunity = Opportunity(
-            title=data.get('title'),
-            description=data.get('description'),
-            department=data.get('department'),
-            opportunity_type=data.get('opportunity_type'),
-            eligibility_requirements=data.get('eligibility_requirements'),
-            deadline=data.get('deadline'),
-            funding_amount=data.get('funding_amount'),
-            application_url=data.get('application_url'),
-            source_url=data.get('source_url'),
-            contact_email=data.get('contact_email'),
-            tags=data.get('tags', []),
-            is_active=data.get('is_active', True)
-        )
-        
-        db.session.add(opportunity)
-        db.session.commit()
-        
-        return jsonify(opportunity.to_dict()), 201
-        
-    except Exception as e:
-        db.session.rollback()
-        current_app.logger.error(f"Error creating opportunity: {e}")
-        return jsonify({"error": "Failed to create opportunity", "message": str(e)}), 500
-
-@opportunities_bp.route('/<int:opportunity_id>', methods=['PUT'])
-@require_auth
-def update_opportunity(opportunity_id):
-    """Update an existing opportunity."""
-    try:
-        opportunity = db.session.query(Opportunity).filter(Opportunity.id == opportunity_id).first()
-        
-        if not opportunity:
-            return jsonify({"error": "Opportunity not found"}), 404
-        
-        data = request.get_json()
-        if not data:
-            return jsonify({"error": "No data provided"}), 400
-        
-        # Update fields if provided
-        for field in ['title', 'description', 'department', 'opportunity_type', 
-                     'eligibility_requirements', 'deadline', 'funding_amount',
-                     'application_url', 'source_url', 'contact_email', 'tags', 'is_active']:
-            if field in data:
-                setattr(opportunity, field, data[field])
-        
-        db.session.commit()
-        
-        return jsonify(opportunity.to_dict())
-        
-    except Exception as e:
-        db.session.rollback()
-        current_app.logger.error(f"Error updating opportunity {opportunity_id}: {e}")
-        return jsonify({"error": "Failed to update opportunity", "message": str(e)}), 500
-
-@opportunities_bp.route('/<int:opportunity_id>', methods=['DELETE'])
-@require_auth
-def delete_opportunity(opportunity_id):
-    """Delete an opportunity."""
-    try:
-        opportunity = db.session.query(Opportunity).filter(Opportunity.id == opportunity_id).first()
-        
-        if not opportunity:
-            return jsonify({"error": "Opportunity not found"}), 404
-        
-        db.session.delete(opportunity)
-        db.session.commit()
-        
-        return jsonify({"message": f"Opportunity {opportunity_id} deleted successfully"})
-        
-    except Exception as e:
-        db.session.rollback()
-        current_app.logger.error(f"Error deleting opportunity {opportunity_id}: {e}")
-        return jsonify({"error": "Failed to delete opportunity", "message": str(e)}), 500
-
-@opportunities_bp.route('/stats')
-@require_auth
-def get_stats():
-    """Get comprehensive statistics about opportunities."""
-    try:
-        total_count = db.session.query(Opportunity).count()
-        active_count = db.session.query(Opportunity).filter(Opportunity.is_active == True).count()
-        inactive_count = total_count - active_count
-
-        # Recent opportunities (last 7 days based on scraped_at)
-        recent_cutoff = datetime.now() - timedelta(days=7)
-        recent_count = db.session.query(Opportunity).filter(
-            Opportunity.scraped_at >= recent_cutoff,
-            Opportunity.is_active == True
-        ).count()
-
-        # Upcoming deadlines (next 30 days)
-        deadline_now_dt = datetime.now()
-        deadline_cutoff_dt = deadline_now_dt + timedelta(days=30)
-
-        # Convert comparison dates to ISO strings (YYYY-MM-DD) to avoid casting errors on text columns
-        deadline_now_str = deadline_now_dt.strftime("%Y-%m-%d")
-        deadline_cutoff_str = deadline_cutoff_dt.strftime("%Y-%m-%d")
-
-        upcoming_deadline_count = db.session.query(Opportunity).filter(
-            Opportunity.deadline.isnot(None),
-            Opportunity.deadline >= deadline_now_str,
-            Opportunity.deadline <= deadline_cutoff_str,
-            Opportunity.is_active == True
-        ).count()
-
-        # Category breakdown (opportunity_type)
-        category_counts = db.session.query(
-            Opportunity.opportunity_type.label("category"),
-            func.count(Opportunity.id).label("count")
-        ).group_by(Opportunity.opportunity_type).all()
-
-        categories_list = [
-            {
-                "category": cat.category if cat.category else "Unknown",
-                "count": cat.count
-            }
-            for cat in category_counts
-        ]
-
-        stats = {
-            "total_opportunities": total_count,
-            "active_opportunities": active_count,
-            "inactive_opportunities": inactive_count,
-            "recent_opportunities": recent_count,
-            "upcoming_deadlines": upcoming_deadline_count,
-            "categories": categories_list,
-            # Additional metadata
-            "departments": db.session.query(func.count(Opportunity.department.distinct())).scalar(),
-            "with_funding": db.session.query(Opportunity).filter(Opportunity.funding_amount.isnot(None)).count(),
-            "last_updated": datetime.now().isoformat(),
-        }
-
-        return jsonify(stats)
-        
-    except Exception as e:
-        current_app.logger.error(f"Error getting stats: {e}")
-        return jsonify({"error": "Failed to get statistics", "message": str(e)}), 500
-
-@opportunities_bp.route('/departments/list')
-@require_auth
-def get_departments():
-    """Get list of all departments."""
-    try:
-        departments = db.session.query(Opportunity.department).filter(
-            Opportunity.department.isnot(None),
-            Opportunity.is_active == True
-        ).distinct().all()
-        
-        department_list = [dept[0] for dept in departments if dept[0]]
+        # Convert to dict format
+        opportunities_data = []
+        for opp in opportunities:
+            opp_dict = opp.to_dict()
+            # Add computed fields for backward compatibility
+            opp_dict['category'] = opp.opportunity_type
+            opp_dict['url'] = opp.application_url
+            opp_dict['requirements'] = opp.eligibility_requirements
+            opportunities_data.append(opp_dict)
         
         return jsonify({
-            "departments": sorted(department_list),
-            "count": len(department_list)
+            "opportunities": opportunities_data,
+            "pagination": {
+                "page": page,
+                "limit": limit,
+                "total": total_count,
+                "pages": (total_count + limit - 1) // limit
+            }
         })
         
     except Exception as e:
-        current_app.logger.error(f"Error getting departments: {e}")
-        return jsonify({"error": "Failed to get departments", "message": str(e)}), 500
+        return jsonify({"error": f"Failed to fetch opportunities: {str(e)}"}), 500
 
-@opportunities_bp.route('/recent')
-@require_auth
-def get_recent_opportunities():
-    """Get recently added opportunities."""
-    days = get_query_param('days', 7, int)
-    limit = get_query_param('limit', 20, int)
-    
-    if days < 1 or days > 30:
-        days = 7
-    if limit < 1 or limit > 10000:
-        limit = 20
-    
+
+@opportunities_bp.route('/search', methods=['GET'])
+def search_opportunities():
+    """Search opportunities using full-text search with ranking."""
     try:
+        query_text = request.args.get('q', '').strip()
+        limit = int(request.args.get('limit', 10))
+        
+        if not query_text:
+            return jsonify({"opportunities": [], "total": 0})
+        
+        # Prepare the search query for PostgreSQL full-text search
+        # Handle simple queries and phrases
+        if '"' in query_text:
+            # Handle phrase search
+            tsquery = query_text.replace('"', "'")
+        else:
+            # Handle individual terms with OR logic for broader results
+            terms = query_text.split()
+            tsquery = ' | '.join(terms)
+        
+        try:
+            # Use full-text search with ranking
+            opportunities = db.session.query(Opportunity).filter(
+                and_(
+                    Opportunity.is_active == True,
+                    Opportunity.search_vector.op('@@')(func.to_tsquery('english', tsquery))
+                )
+            ).order_by(
+                desc(func.ts_rank(Opportunity.search_vector, func.to_tsquery('english', tsquery)))
+            ).limit(limit).all()
+            
+        except Exception as search_error:
+            # Fallback to basic ILIKE search if full-text search fails
+            search_terms = f"%{query_text}%"
+            opportunities = db.session.query(Opportunity).filter(
+                and_(
+                    Opportunity.is_active == True,
+                    or_(
+                        Opportunity.title.ilike(search_terms),
+                        Opportunity.description.ilike(search_terms),
+                        Opportunity.department.ilike(search_terms)
+                    )
+                )
+            ).order_by(desc(Opportunity.scraped_at)).limit(limit).all()
+        
+        # Convert to dict format
+        opportunities_data = []
+        for opp in opportunities:
+            opp_dict = opp.to_dict()
+            # Add computed fields for backward compatibility
+            opp_dict['category'] = opp.opportunity_type
+            opp_dict['url'] = opp.application_url
+            opp_dict['requirements'] = opp.eligibility_requirements
+            opportunities_data.append(opp_dict)
+        
+        return jsonify({
+            "opportunities": opportunities_data,
+            "total": len(opportunities_data)
+        })
+        
+    except Exception as e:
+        return jsonify({"error": f"Search failed: {str(e)}"}), 500
+
+
+@opportunities_bp.route('/stats', methods=['GET'])
+def get_opportunity_stats():
+    """Get opportunity statistics including recent new opportunities."""
+    try:
+        # Get total active opportunities
+        total_active = db.session.query(Opportunity).filter(
+            Opportunity.is_active == True
+        ).count()
+        
+        # Get opportunities by status
+        status_counts = db.session.query(
+            Opportunity.status,
+            func.count(Opportunity.id).label('count')
+        ).filter(
+            Opportunity.is_active == True
+        ).group_by(Opportunity.status).all()
+        
+        # Get recent new opportunities (last 7 days)
+        cutoff_date = datetime.now() - timedelta(days=7)
+        recent_new = db.session.query(Opportunity).filter(
+            and_(
+                Opportunity.first_seen_at >= cutoff_date,
+                or_(Opportunity.status == 'new', Opportunity.status == 'active'),
+                Opportunity.is_active == True
+            )
+        ).count()
+        
+        # Get opportunities with funding
+        funded_count = db.session.query(Opportunity).filter(
+            and_(
+                Opportunity.is_active == True,
+                Opportunity.funding_amount.isnot(None),
+                Opportunity.funding_amount != ''
+            )
+        ).count()
+        
+        # Get top departments
+        top_departments = db.session.query(
+            Opportunity.department,
+            func.count(Opportunity.id).label('count')
+        ).filter(
+            and_(
+                Opportunity.is_active == True,
+                Opportunity.department.isnot(None),
+                Opportunity.department != ''
+            )
+        ).group_by(Opportunity.department).order_by(
+            desc(func.count(Opportunity.id))
+        ).limit(10).all()
+        
+        return jsonify({
+            "total_active": total_active,
+            "recent_new_opportunities": recent_new,
+            "funded_opportunities": funded_count,
+            "status_breakdown": {
+                status: count for status, count in status_counts
+            },
+            "top_departments": [
+                {"department": dept, "count": count} 
+                for dept, count in top_departments
+            ]
+        })
+        
+    except Exception as e:
+        return jsonify({"error": f"Failed to fetch stats: {str(e)}"}), 500
+
+
+@opportunities_bp.route('/recent-new', methods=['GET'])
+def get_recent_new_opportunities():
+    """Get recently discovered opportunities."""
+    try:
+        days = int(request.args.get('days', 7))
+        limit = int(request.args.get('limit', 50))
+        
         cutoff_date = datetime.now() - timedelta(days=days)
         
         opportunities = db.session.query(Opportunity).filter(
-            Opportunity.scraped_at >= cutoff_date,
-            Opportunity.is_active == True
-        ).order_by(desc(Opportunity.scraped_at)).limit(limit).all()
-        
-        result = [opp.to_dict() for opp in opportunities]
-        
-        return jsonify({
-            "opportunities": result,
-            "total": len(result),
-            "days_back": days,
-            "cutoff_date": cutoff_date.isoformat()
-        })
-        
-    except Exception as e:
-        current_app.logger.error(f"Error getting recent opportunities: {e}")
-        return jsonify({"error": "Failed to get recent opportunities", "message": str(e)}), 500
-
-# Admin endpoints
-@opportunities_bp.route('/admin/delete-all', methods=['DELETE'])
-@require_auth
-def delete_all_opportunities():
-    """Delete ALL opportunities from the database (DESTRUCTIVE OPERATION)."""
-    confirm = get_query_param('confirm')
-    
-    if confirm != 'DELETE_ALL':
-        return jsonify({
-            "error": "Confirmation required",
-            "message": "Must provide confirm='DELETE_ALL' to delete all opportunities"
-        }), 400
-    
-    try:
-        total_count = db.session.query(Opportunity).count()
-        deleted_count = db.session.query(Opportunity).delete()
-        db.session.commit()
-        
-        current_app.logger.warning(f"DELETED ALL {deleted_count} opportunities from database")
-        
-        return jsonify({
-            "message": f"Successfully deleted ALL {deleted_count} opportunities",
-            "previous_total": total_count,
-            "deleted_count": deleted_count
-        })
-        
-    except Exception as e:
-        db.session.rollback()
-        current_app.logger.error(f"Failed to delete all opportunities: {e}")
-        return jsonify({"error": "Failed to delete opportunities", "message": str(e)}), 500
-
-@opportunities_bp.route('/admin/delete-inactive', methods=['DELETE'])
-@require_auth
-def delete_inactive_opportunities():
-    """Delete all inactive opportunities."""
-    try:
-        deleted_count = db.session.query(Opportunity).filter(
-            Opportunity.is_active == False
-        ).delete()
-        db.session.commit()
-        
-        current_app.logger.info(f"Deleted {deleted_count} inactive opportunities")
-        
-        return jsonify({"message": f"Deleted {deleted_count} inactive opportunities"})
-        
-    except Exception as e:
-        db.session.rollback()
-        current_app.logger.error(f"Failed to delete inactive opportunities: {e}")
-        return jsonify({"error": "Failed to delete inactive opportunities", "message": str(e)}), 500 
-
-@opportunities_bp.route('/search')
-@require_auth
-def search_opportunities():
-    """Advanced search with multiple filters."""
-    # This endpoint is not fully implemented in the original file,
-    # so it's added here as a placeholder.
-    # It would require a more complex query building logic.
-    return jsonify({"message": "Search opportunities endpoint is not fully implemented yet."}), 501
-
-@opportunities_bp.route('/scrape', methods=['POST'])
-@require_auth
-def trigger_scrape():
-    """Trigger scraping for opportunities."""
-    # This endpoint is not fully implemented in the original file,
-    # so it's added here as a placeholder.
-    # It would require a scraping logic.
-    return jsonify({"message": "Scrape opportunities endpoint is not fully implemented yet."}), 501
-
-@opportunities_bp.route('/search/llm', methods=['POST'])
-@require_auth
-def llm_search():
-    """LLM-powered semantic search using Google Gemini.
-
-    Query parameters:
-      • query – search string (required)
-      • limit – max number of cards to return (default 20, max 100)
-
-    Response JSON matches the structure consumed by the React front-end:
-    {
-      "results": [Opportunity, …],
-      "total_found": int,
-      "ai_explanation": str,
-      "query": str,
-      "processing_time": int  # ms
-    }
-    """
-    start_time = datetime.now()
-
-    query_str = request.args.get('query', '').strip()
-    try:
-        limit = min(max(int(request.args.get('limit', 20)), 1), 100)
-    except ValueError:
-        limit = 20
-
-    if not query_str:
-        return jsonify({
-            "results": [],
-            "total_found": 0,
-            "ai_explanation": "Empty query – nothing to search.",
-            "query": query_str,
-            "processing_time": 0
-        })
-
-    # 1) Retrieve relevant opportunities from the database first (RAG pattern)
-    # ------------------------------------------------------------------
-    try:
-        # Break search query into words for a broader search
-        search_words = [word.strip() for word in query_str.split() if len(word.strip()) > 2]
-        
-        if not search_words:
-             # Fallback to the full query string if no valid words are found
-            search_words = [query_str.strip()]
-
-        filters = []
-        for word in search_words:
-            filters.append(Opportunity.title.ilike(f"%{word}%"))
-            filters.append(Opportunity.description.ilike(f"%{word}%"))
-            # Also check if any of the tags match the word - use array_to_string for broader compatibility
-            filters.append(func.array_to_string(Opportunity.tags, ' ').ilike(f"%{word}%"))
-
-        search_filter = or_(*filters)
-        
-        # We retrieve a larger set from the DB to give the LLM more context
-        matches_q = db.session.query(Opportunity).filter(
-            search_filter,
-            Opportunity.is_active == True
-        ).order_by(desc(Opportunity.scraped_at)).limit(100) # Retrieve up to 100 for context
-        
-        context_opportunities = [opp.to_dict() for opp in matches_q]
-        if not context_opportunities:
-             return jsonify({
-                "results": [],
-                "total_found": 0,
-                "ai_explanation": "No relevant opportunities found in the database for your query.",
-                "query": query_str,
-                "processing_time": (datetime.now() - start_time).total_seconds()
-            })
-
-    except Exception as e:
-        current_app.logger.error(f"RAG retrieval step failed: {e}")
-        return jsonify({"error": "Failed to retrieve opportunities from database", "message": str(e)}), 500
-
-
-    # ------------------------------------------------------------------
-    # 2) Use Gemini to process the retrieved opportunities
-    # ------------------------------------------------------------------
-    gemini_key = os.getenv("GEMINI_API_KEY")
-    if GEMINI_AVAILABLE and gemini_key:
-        try:
-            client = genai.Client(api_key=gemini_key)
-            model_name = os.getenv("GEMINI_MODEL", "gemma-3-27b-it")
-
-            # Convert context opportunities to a string format for the prompt
-            context_str = json.dumps(context_opportunities, indent=2)
-
-            sys_prompt = (
-                "You are a helpful assistant that analyzes a list of Stanford research "
-                "opportunities based on a user's query. Your task is to return a JSON object "
-                "containing a concise summary of your findings and a list of the IDs of the most "
-                "relevant opportunities from the provided list. "
-                "Output *ONLY* valid JSON with this exact schema:\n\n"
-                "{\n"
-                "  \"ai_explanation\": <string – 1-2 sentence summary of why you chose these opportunities.>,\n"
-                "  \"relevant_opportunity_ids\": [ <list of integer IDs of the most relevant opportunities from the context> ]\n"
-                "}\n\n"
-                f"Analyze the provided list and find the opportunities most relevant to the user's search query. Return up to {limit} of the best matches.\n"
-                "Do NOT make up any opportunities or IDs. Use only the data from the provided list.\n"
-                "Do NOT wrap the JSON in markdown fences or any extra text."
+            and_(
+                Opportunity.first_seen_at >= cutoff_date,
+                or_(Opportunity.status == 'new', Opportunity.status == 'active'),
+                Opportunity.is_active == True
             )
-
-            user_prompt = f"Search query: {query_str}\n\nHere are the opportunities to analyze:\n{context_str}"
-
-            response = client.models.generate_content(
-                model=model_name,
-                contents=[sys_prompt, user_prompt],
-                config=types.GenerateContentConfig(
-                    temperature=0.1,
-                    max_output_tokens=8192,
-                ),
-            )
-            raw_text = response.text.strip()
-
-            # Attempt to parse JSON out of reply – Gemini might sometimes wrap it
-            try:
-                parsed_json = json.loads(raw_text)
-            except json.JSONDecodeError:
-                # Try to extract the first JSON object in the text
-                match = re.search(r"\{.*\}", raw_text, re.S)
-                if match:
-                    parsed_json = json.loads(match.group(0))
-                else:
-                    raise
-            
-            relevant_ids = parsed_json.get("relevant_opportunity_ids", [])
-            
-            # Create a dictionary for quick lookups
-            context_dict = {opp['id']: opp for opp in context_opportunities}
-            
-            # Filter the original context opportunities to only include the ones the LLM selected, preserving order
-            final_opportunities = [context_dict[id] for id in relevant_ids if id in context_dict]
-            
-            elapsed_s = (datetime.now() - start_time).total_seconds()
-            return jsonify({
-                "results": final_opportunities,
-                "total_found": len(final_opportunities),
-                "ai_explanation": parsed_json.get("ai_explanation", ""),
-                "query": query_str,
-                "processing_time": elapsed_s
-            })
-        except Exception as e:
-            current_app.logger.error(f"Gemini search failed: {e}")
-            # Fall through to keyword fallback
-
-    # ------------------------------------------------------------------
-    # 2) Fallback – keyword search in DB
-    # ------------------------------------------------------------------
-    current_app.logger.info("Using keyword fallback for LLM search")
-    try:
-        search_filter = or_(
-            Opportunity.title.ilike(f"%{query_str}%"),
-            Opportunity.description.ilike(f"%{query_str}%")
-        )
-        matches_q = db.session.query(Opportunity).filter(
-            search_filter,
-            Opportunity.is_active == True
-        ).order_by(desc(Opportunity.scraped_at)).limit(limit)
-        matches = [opp.to_dict() for opp in matches_q]
-        elapsed_s = (datetime.now() - start_time).total_seconds()
+        ).order_by(desc(Opportunity.first_seen_at)).limit(limit).all()
+        
+        # Convert to dict format
+        opportunities_data = []
+        for opp in opportunities:
+            opp_dict = opp.to_dict()
+            # Add computed fields for backward compatibility
+            opp_dict['category'] = opp.opportunity_type
+            opp_dict['url'] = opp.application_url
+            opp_dict['requirements'] = opp.eligibility_requirements
+            opportunities_data.append(opp_dict)
+        
         return jsonify({
-            "results": matches,
-            "total_found": len(matches),
-            "ai_explanation": "Fallback keyword search – Gemini unavailable or errored.",
-            "query": query_str,
-            "processing_time": elapsed_s
+            "opportunities": opportunities_data,
+            "total": len(opportunities_data),
+            "days": days
         })
+        
     except Exception as e:
-        current_app.logger.error(f"Keyword fallback search failed: {e}")
-        return jsonify({
-            "results": [],
-            "total_found": 0,
-            "ai_explanation": "Search failed due to server error.",
-            "query": query_str,
-            "processing_time": 0,
-            "error": str(e)
-        }), 500
-
-# Add auth info endpoint for debugging
-@opportunities_bp.route('/auth/info')
-@require_auth_optional
-def auth_info():
-    """Get authentication configuration info (for debugging)."""
-    info = get_auth_info()
-    info['endpoint'] = 'opportunities.auth_info'
-    info['authenticated'] = bool(request.headers.get('X-API-Key'))
-    return jsonify(info) 
+        return jsonify({"error": f"Failed to fetch recent opportunities: {str(e)}"}), 500 

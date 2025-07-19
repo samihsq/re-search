@@ -13,6 +13,9 @@ import {
   Launch as LaunchIcon,
   Event as EventIcon,
   LocationOn as LocationIcon,
+  AttachMoney as MoneyIcon,
+  NewReleases as NewIcon,
+  VisibilityOff as MissingIcon,
 } from "@mui/icons-material";
 import { Opportunity } from "../services/api";
 
@@ -25,8 +28,17 @@ export const OpportunityCard: React.FC<OpportunityCardProps> = ({
 }) => {
   const formatDate = (dateString?: string) => {
     if (!dateString) return null;
+
+    const date = new Date(dateString);
+
+    // Check if the date is valid
+    if (isNaN(date.getTime())) {
+      // If date is invalid, return the original string
+      return dateString;
+    }
+
     try {
-      return new Date(dateString).toLocaleDateString();
+      return date.toLocaleDateString();
     } catch {
       return dateString;
     }
@@ -58,8 +70,15 @@ export const OpportunityCard: React.FC<OpportunityCardProps> = ({
   const getDeadlineColor = (deadline?: string) => {
     if (!deadline) return "text.secondary";
 
+    const deadlineDate = new Date(deadline);
+
+    // Check if the date is valid
+    if (isNaN(deadlineDate.getTime())) {
+      // If date is invalid, return neutral color
+      return "text.secondary";
+    }
+
     try {
-      const deadlineDate = new Date(deadline);
       const now = new Date();
       const daysUntilDeadline = Math.ceil(
         (deadlineDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)
@@ -71,6 +90,41 @@ export const OpportunityCard: React.FC<OpportunityCardProps> = ({
       return "success.main";
     } catch {
       return "text.secondary";
+    }
+  };
+
+  const getStatusIndicator = (status?: string) => {
+    if (!status) return null;
+
+    switch (status) {
+      case "new":
+        return (
+          <Box sx={{ display: "flex", alignItems: "center", mb: 1 }}>
+            <NewIcon sx={{ mr: 1, fontSize: 16, color: "primary.main" }} />
+            <Typography
+              variant="body2"
+              color="primary.main"
+              sx={{ fontWeight: "medium" }}
+            >
+              New Opportunity
+            </Typography>
+          </Box>
+        );
+      case "missing":
+        return (
+          <Box sx={{ display: "flex", alignItems: "center", mb: 1 }}>
+            <MissingIcon sx={{ mr: 1, fontSize: 16, color: "text.disabled" }} />
+            <Typography
+              variant="body2"
+              color="text.disabled"
+              sx={{ fontSize: "0.75rem" }}
+            >
+              Not found in recent scrape
+            </Typography>
+          </Box>
+        );
+      default:
+        return null;
     }
   };
 
@@ -115,6 +169,8 @@ export const OpportunityCard: React.FC<OpportunityCardProps> = ({
           )}
         </Box>
 
+        {getStatusIndicator(opportunity.status)}
+
         {opportunity.department && (
           <Box sx={{ display: "flex", alignItems: "center", mb: 1 }}>
             <SchoolIcon sx={{ mr: 1, fontSize: 16, color: "text.secondary" }} />
@@ -149,6 +205,19 @@ export const OpportunityCard: React.FC<OpportunityCardProps> = ({
               color={getDeadlineColor(opportunity.deadline)}
             >
               Deadline: {formatDate(opportunity.deadline)}
+            </Typography>
+          </Box>
+        )}
+
+        {opportunity.funding_amount && (
+          <Box sx={{ display: "flex", alignItems: "center", mb: 1 }}>
+            <MoneyIcon sx={{ mr: 1, fontSize: 16, color: "success.main" }} />
+            <Typography
+              variant="body2"
+              color="success.main"
+              sx={{ fontWeight: "medium" }}
+            >
+              Funding: {opportunity.funding_amount}
             </Typography>
           </Box>
         )}

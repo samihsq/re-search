@@ -15,6 +15,7 @@ from ..config import settings, SCRAPING_CONFIGS
 from ..scrapers.base_scraper import BaseScraper
 from ..scrapers.undergrad_research_scraper import UndergradResearchScraper
 from ..scrapers.stanford_program_scraper import StanfordProgramScraper
+from .opportunity_tracking_service import opportunity_tracking_service
 
 
 class ScrapingService:
@@ -59,135 +60,73 @@ class ScrapingService:
 
     def get_scraper(self, url: str) -> BaseScraper:
         """Get the appropriate scraper for a given URL."""
-        domain = urlparse(url).netloc.lower()
-        
-        # Try exact domain match first
-        if domain in self.scrapers:
-            scraper_class = self.scrapers[domain]
-            logger.info(f"Using {scraper_class.__name__} for {domain}")
-            return scraper_class(url)
-        
-        # Try partial domain matches for Stanford sites
-        for domain_pattern, scraper_class in self.scrapers.items():
-            if domain_pattern in domain:
-                logger.info(f"Using {scraper_class.__name__} for {domain} (matched pattern: {domain_pattern})")
+        try:
+            domain = urlparse(url).netloc.lower()
+            logger.debug(f"Selecting scraper for domain: {domain}")
+            
+            # Try exact domain match first
+            if domain in self.scrapers:
+                scraper_class = self.scrapers[domain]
+                logger.info(f"Using {scraper_class.__name__} for {domain}")
                 return scraper_class(url)
-        
-        # Default to Stanford program scraper for any Stanford site
-        if "stanford" in domain:
-            logger.info(f"Using StanfordProgramScraper as default for Stanford domain: {domain}")
+            
+            # Try partial domain matches for Stanford sites
+            for domain_pattern, scraper_class in self.scrapers.items():
+                if domain_pattern in domain:
+                    logger.info(f"Using {scraper_class.__name__} for {domain} (matched pattern: {domain_pattern})")
+                    return scraper_class(url)
+            
+            # Default to Stanford program scraper for any Stanford site
+            if "stanford" in domain:
+                logger.info(f"Using StanfordProgramScraper as default for Stanford domain: {domain}")
+                return StanfordProgramScraper(url)
+            
+            # Final fallback to Stanford program scraper (don't use abstract BaseScraper)
+            logger.warning(f"No specific scraper found for {domain}, using StanfordProgramScraper as fallback")
             return StanfordProgramScraper(url)
-        
-        # Final fallback to base scraper
-        logger.warning(f"No specific scraper found for {domain}, using BaseScraper")
-        return BaseScraper(url)
+            
+        except Exception as e:
+            logger.error(f"Error selecting scraper for {url}: {e}")
+            # Always return a concrete scraper, never the abstract base class
+            logger.warning("Falling back to StanfordProgramScraper due to error")
+            return StanfordProgramScraper(url)
 
     # ------------------------------------------------------------------
     # Database persistence helper
     # ------------------------------------------------------------------
     def _save_opportunities_to_db(self, opportunities: List[Dict[str, Any]], source_url: str) -> Dict[str, int]:
-        """Persist scraped (and optionally LLM-enhanced) opportunities.
+        """Persist scraped opportunities using advanced tracking and similarity detection.
 
-        The function performs a simple upsert keyed by (title, source_url).
-        It returns a dictionary with counts of new and updated rows so the
-        caller can surface accurate metrics.
+        This function uses the OpportunityTrackingService to detect duplicates, track changes,
+        and maintain opportunity status between scrapes.
         """
-        new_count = 0
-        updated_count = 0
-
         if not opportunities:
-            return {"new_count": 0, "updated_count": 0}
+            return {"new_count": 0, "updated_count": 0, "missing_count": 0, "reappeared_count": 0}
 
-        db: Session = SessionLocal()
+        # Ensure tags is a list for all opportunities
+        for opp in opportunities:
+            tags = opp.get("tags") or []
+            if isinstance(tags, str):
+                try:
+                    # Try parsing as JSON first
+                    import json
+                    tags = json.loads(tags)
+                except (json.JSONDecodeError, ValueError):
+                    # If not JSON, treat as single tag
+                    tags = [tags]
+            elif not isinstance(tags, list):
+                tags = []
+            opp["tags"] = tags
+
+        # Use the tracking service to process opportunities
         try:
-            for opp in opportunities:
-                title = (opp.get("title") or "").strip()
-                if not title:
-                    continue  # skip malformed entries without a title
-
-                existing = (
-                    db.query(Opportunity)
-                    .filter(
-                        Opportunity.title == title,
-                        Opportunity.source_url == source_url,
-                    )
-                    .first()
-                )
-
-                # Ensure tags is a list for JSON column
-                tags = opp.get("tags") or []
-                if isinstance(tags, str):
-                    try:
-                        # Try parsing as JSON first
-                        import json
-                        tags = json.loads(tags)
-                    except (json.JSONDecodeError, ValueError):
-                        # If not JSON, treat as single tag
-                        tags = [tags]
-                elif not isinstance(tags, list):
-                    tags = []
-
-                opportunity = Opportunity(
-                    title=opp.get("title") or "Untitled",
-                    description=opp.get("description") or "",
-                    department=opp.get("department") or "",
-                    opportunity_type=opp.get("opportunity_type") or "research",
-                    eligibility_requirements=opp.get("eligibility_requirements"),
-                    deadline=opp.get("deadline"),
-                    funding_amount=opp.get("funding_amount"),
-                    application_url=opp.get("application_url") or source_url,
-                    source_url=source_url,
-                    contact_email=opp.get("contact_email"),
-                    tags=tags,
-                    
-                    # LLM-related metadata
-                    llm_parsed=opp.get("llm_parsed", False),
-                    parsing_confidence=opp.get("parsing_confidence"),
-                    scraper_used=opp.get("scraper_used"),
-                    llm_error=opp.get("llm_error"),
-                    processed_at=opp.get("processed_at"),
-                    
-                    # Standard metadata
-                    scraped_at=opp.get("scraped_at") or datetime.now(),
-                    is_active=True
-                )
-
-                if existing:
-                    # Update selected fields only if new data is present
-                    existing.description = opp.get("description", existing.description)
-                    existing.department = opp.get("department", existing.department)
-                    existing.opportunity_type = opp.get("opportunity_type", existing.opportunity_type)
-                    existing.eligibility_requirements = opp.get(
-                        "eligibility_requirements", existing.eligibility_requirements
-                    )
-                    existing.deadline = opp.get("deadline", existing.deadline)
-                    existing.funding_amount = opp.get("funding_amount", existing.funding_amount)
-                    existing.application_url = opp.get("application_url", existing.application_url)
-                    existing.contact_email = opp.get("contact_email", existing.contact_email)
-                    existing.tags = tags or existing.tags
-
-                    # LLM parsing metadata
-                    existing.llm_parsed = opp.get("llm_parsed", existing.llm_parsed)
-                    existing.parsing_confidence = opp.get("parsing_confidence", existing.parsing_confidence)
-                    existing.scraper_used = opp.get("scraper_used", existing.scraper_used)
-                    existing.llm_error = opp.get("llm_error", existing.llm_error)
-                    existing.processed_at = opp.get("processed_at", existing.processed_at)
-                    existing.scraped_at = datetime.now()
-                    existing.is_active = True
-
-                    updated_count += 1
-                else:
-                    db.add(opportunity)
-                    new_count += 1
-
-            db.commit()
+            result = opportunity_tracking_service.process_scraped_opportunities(opportunities, source_url)
+            logger.info(f"Tracking results for {source_url}: {result}")
+            return result
         except Exception as e:
-            db.rollback()
-            logger.error(f"Failed to save opportunities for {source_url}: {e}")
-        finally:
-            db.close()
-
-        return {"new_count": new_count, "updated_count": updated_count}
+            logger.error(f"Failed to process opportunities with tracking for {source_url}: {e}")
+            # Fallback to basic counts if tracking fails
+            return {"new_count": len(opportunities), "updated_count": 0, "missing_count": 0, "reappeared_count": 0}
 
     async def scrape_single_url(self, url: str) -> Dict[str, Any]:
         """Scrape a single URL and return results."""
@@ -203,6 +142,8 @@ class ScrapingService:
             stats = self._save_opportunities_to_db(opportunities, url)
             new_count = stats["new_count"]
             updated_count = stats["updated_count"]
+            missing_count = stats.get("missing_count", 0)
+            reappeared_count = stats.get("reappeared_count", 0)
 
             end_time = datetime.now()
             duration = (end_time - start_time).total_seconds()
@@ -214,6 +155,8 @@ class ScrapingService:
                 "opportunities": opportunities,
                 "new_count": new_count,
                 "updated_count": updated_count,
+                "missing_count": missing_count,
+                "reappeared_count": reappeared_count,
                 "scraping_time": duration,
                 "scraper_used": scraper.__class__.__name__,
                 "domain": urlparse(url).netloc
@@ -289,8 +232,12 @@ class ScrapingService:
     async def scrape_all_websites(self, urls: List[str] = None) -> List[Dict[str, Any]]:
         """Scrape all Stanford research websites using the comprehensive RESEARCH_URLS list."""
         if urls is None:
-            from ..config import RESEARCH_URLS
-            urls = RESEARCH_URLS
+            try:
+                from ..config import RESEARCH_URLS
+                urls = RESEARCH_URLS
+            except ImportError:
+                logger.warning("RESEARCH_URLS not found in config, using target_websites")
+                urls = settings.target_websites
         
         logger.info(f"Starting comprehensive scraping for {len(urls)} Stanford research URLs")
         return await self.scrape_all_urls(urls)
@@ -314,9 +261,14 @@ class ScrapingService:
                 "successful_scrapes": 0,
                 "failed_scrapes": 0,
                 "total_opportunities": 0,
+                "new_opportunities": 0,
+                "updated_opportunities": 0,
+                "llm_enhanced": 0,
                 "average_scraping_time": 0,
+                "total_time_seconds": 0,
                 "domains_scraped": [],
-                "scrapers_used": {}
+                "scrapers_used": {},
+                "success_rate": 0
             }
         
         successful_results = [r for r in results if r.get('status') == 'success']
@@ -330,6 +282,19 @@ class ScrapingService:
             scrapers_used[scraper] = scrapers_used.get(scraper, 0) + 1
         
         total_opportunities = sum(r.get('opportunities_found', 0) for r in successful_results)
+        new_opportunities = sum(r.get('new_count', 0) for r in successful_results)
+        updated_opportunities = sum(r.get('updated_count', 0) for r in successful_results)
+        missing_opportunities = sum(r.get('missing_count', 0) for r in successful_results)
+        reappeared_opportunities = sum(r.get('reappeared_count', 0) for r in successful_results)
+        
+        # Count LLM enhanced opportunities
+        llm_enhanced = 0
+        for result in successful_results:
+            opportunities = result.get('opportunities', [])
+            for opp in opportunities:
+                if opp.get('llm_parsed', False):
+                    llm_enhanced += 1
+        
         total_time = sum(r.get('scraping_time', 0) for r in results)
         avg_time = total_time / len(results) if results else 0
         
@@ -338,8 +303,13 @@ class ScrapingService:
             "successful_scrapes": len(successful_results),
             "failed_scrapes": len(failed_results),
             "total_opportunities": total_opportunities,
+            "new_opportunities": new_opportunities,
+            "updated_opportunities": updated_opportunities,
+            "missing_opportunities": missing_opportunities,
+            "reappeared_opportunities": reappeared_opportunities,
+            "llm_enhanced": llm_enhanced,
             "average_scraping_time": round(avg_time, 2),
-            "total_scraping_time": round(total_time, 2),
+            "total_time_seconds": round(total_time, 2),
             "domains_scraped": domains,
             "scrapers_used": scrapers_used,
             "success_rate": round(len(successful_results) / len(results) * 100, 1) if results else 0
