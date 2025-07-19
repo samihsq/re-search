@@ -179,7 +179,7 @@ const SimpleResearchOpportunities: React.FC = () => {
 
   const loadStats = useCallback(async () => {
     try {
-      const statsData = await apiService.getStats();
+      const statsData = await apiService.getOpportunityStats();
       setStats(statsData);
     } catch (err) {
       console.error("Load stats error:", err);
@@ -231,9 +231,9 @@ const SimpleResearchOpportunities: React.FC = () => {
           : opportunitiesResult?.opportunities || [];
 
         setOpportunities(opportunities);
-        setTotalItems(statsResult?.total_opportunities || 0);
+        setTotalItems(statsResult?.total_active || 0);
         setTotalPages(
-          Math.ceil((statsResult?.total_opportunities || 0) / itemsPerPage)
+          Math.ceil((statsResult?.total_active || 0) / itemsPerPage)
         );
 
         if (resetPage) {
@@ -527,9 +527,7 @@ const SimpleResearchOpportunities: React.FC = () => {
                     <Typography color="text.secondary" gutterBottom>
                       Total Opportunities
                     </Typography>
-                    <Typography variant="h4">
-                      {stats.total_opportunities}
-                    </Typography>
+                    <Typography variant="h4">{stats.total_active}</Typography>
                   </Box>
                   <TrendingUpIcon color="primary" sx={{ fontSize: 40 }} />
                 </Box>
@@ -552,7 +550,7 @@ const SimpleResearchOpportunities: React.FC = () => {
                       Active Opportunities
                     </Typography>
                     <Typography variant="h4" color="success.main">
-                      {stats.active_opportunities}
+                      {stats.status_breakdown?.active || 0}
                     </Typography>
                   </Box>
                   <AnalyticsIcon color="success" sx={{ fontSize: 40 }} />
@@ -576,7 +574,7 @@ const SimpleResearchOpportunities: React.FC = () => {
                       Recent (7 days)
                     </Typography>
                     <Typography variant="h4" color="info.main">
-                      {stats.recent_opportunities}
+                      {stats.recent_new_opportunities}
                     </Typography>
                   </Box>
                   <AccessTimeIcon color="info" sx={{ fontSize: 40 }} />
@@ -597,10 +595,10 @@ const SimpleResearchOpportunities: React.FC = () => {
                 >
                   <Box>
                     <Typography color="text.secondary" gutterBottom>
-                      Upcoming Deadlines
+                      Funded Opportunities
                     </Typography>
                     <Typography variant="h4" color="warning.main">
-                      {stats.upcoming_deadlines}
+                      {stats.funded_opportunities}
                     </Typography>
                   </Box>
                   <SchoolIcon color="warning" sx={{ fontSize: 40 }} />

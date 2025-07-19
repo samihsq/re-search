@@ -153,16 +153,11 @@ export interface ScrapingResponse {
 }
 
 export interface OpportunityStats {
-  total_opportunities: number;
-  active_opportunities: number;
-  inactive_opportunities: number;
-  recent_opportunities: number;
-  upcoming_deadlines: number;
-  categories: Array<{
-    category: string;
-    count: number;
-  }>;
-  last_updated: string;
+  total_active: number;
+  recent_new_opportunities: number;
+  funded_opportunities: number;
+  status_breakdown: { [key: string]: number };
+  top_departments: Array<{ department: string; count: number }>;
 }
 
 class ApiService {

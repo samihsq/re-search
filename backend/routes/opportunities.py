@@ -8,7 +8,7 @@ from sqlalchemy.orm import Query
 from datetime import datetime, timedelta
 from typing import List, Dict, Any
 
-from ..models import db, Opportunity
+from models import db, Opportunity
 
 opportunities_bp = Blueprint('opportunities', __name__)
 

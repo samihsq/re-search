@@ -41,6 +41,8 @@ def create_app():
         "http://localhost:8000", 
         "https://localhost:3000",
         "https://localhost:8000",
+        "https://samihsq.github.io",  # GitHub Pages domain
+        "https://samihsq.github.io/re-search",  # GitHub Pages with repo path
     ]
     
     # Add production origins
@@ -65,14 +67,18 @@ def create_app():
         info['headers_received'] = dict(request.headers)
         return jsonify(info)
     
-    # Create database tables
-    with app.app_context():
-        try:
-            db.create_all()
-            print("✅ Database tables created successfully")
-        except Exception as e:
-            print(f"⚠️  Database tables creation failed: {e}")
-            print("📝 App will continue running. Check DATABASE_URL configuration.")
+    # Create database tables (only if DATABASE_URL is properly configured)
+    database_url = settings.database_url
+    if database_url and database_url != "postgresql://postgres:password@localhost:5432/stanford_opportunities":
+        with app.app_context():
+            try:
+                db.create_all()
+                print("✅ Database tables created successfully")
+            except Exception as e:
+                print(f"⚠️  Database tables creation failed: {e}")
+                print("📝 App will continue running. Check DATABASE_URL configuration.")
+    else:
+        print("📝 No database URL configured, skipping database initialization")
     
     # Error handlers
     @app.errorhandler(HTTPException)
