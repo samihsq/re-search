@@ -25,6 +25,7 @@ def get_opportunities():
     try:
         # Parse query parameters
         page = int(request.args.get('page', 1))
+        skip = int(request.args.get('skip', 0))  # Support both skip and page parameters
         limit = int(request.args.get('limit', 20))
         search_query = request.args.get('search', '').strip()
         category = request.args.get('category', '').strip()
@@ -85,8 +86,8 @@ def get_opportunities():
         # Get total count before pagination
         total_count = query.count()
         
-        # Apply pagination
-        offset = (page - 1) * limit
+        # Apply pagination - use skip if provided, otherwise calculate from page
+        offset = skip if skip > 0 else (page - 1) * limit
         opportunities = query.offset(offset).limit(limit).all()
         
         # Convert to dict format

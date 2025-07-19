@@ -208,7 +208,7 @@ const SimpleResearchOpportunities: React.FC = () => {
             limit: itemsPerPage,
             include_inactive: false,
           }),
-          apiService.getStats(),
+          apiService.getOpportunityStats(),
         ]);
 
         // Guard against unexpected API responses
